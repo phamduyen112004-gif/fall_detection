@@ -154,6 +154,8 @@ def main() -> None:
             str(processed),
             "--out",
             str(out_ckpt),
+            "--device",
+            "cpu",
         ],
         strict=args.strict,
     )

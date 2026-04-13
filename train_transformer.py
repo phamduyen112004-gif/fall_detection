@@ -150,6 +150,32 @@ def tune_threshold(y_true: np.ndarray, probs: np.ndarray) -> tuple[float, float]
     return best_t, best_f1
 
 
+def resolve_device(device_arg: str) -> torch.device:
+    """
+    Chọn thiết bị train an toàn.
+    - cpu: ép CPU
+    - auto: thử CUDA trước, nếu không chạy được thì fallback CPU
+    - các giá trị khác: chuyển thẳng cho torch.device
+    """
+    d = (device_arg or "auto").strip().lower()
+    if d == "cpu":
+        return torch.device("cpu")
+    if d == "auto":
+        if torch.cuda.is_available():
+            try:
+                _ = torch.zeros(1, device="cuda")
+                return torch.device("cuda")
+            except Exception as e:
+                print(f"[warn] CUDA không dùng được ({e}). Fallback CPU.")
+                return torch.device("cpu")
+        return torch.device("cpu")
+    try:
+        return torch.device(d)
+    except Exception:
+        print(f"[warn] device '{device_arg}' không hợp lệ. Dùng CPU.")
+        return torch.device("cpu")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train HybridFallTransformer")
     parser.add_argument("--data-dir", type=Path, default=Path("data/processed"))
@@ -162,6 +188,12 @@ def main() -> None:
     parser.add_argument("--patience", type=int, default=25)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help='Thiết bị train: "auto", "cpu", "cuda", "cuda:0"...',
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -195,7 +227,8 @@ def main() -> None:
     train_ds = Subset(full_ds, train_idx.tolist())
     val_ds = Subset(full_ds, val_idx.tolist())
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
+    print(f"[info] Train device: {device}")
     model = HybridFallTransformer().to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
