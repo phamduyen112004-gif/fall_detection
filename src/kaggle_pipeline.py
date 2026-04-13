@@ -97,7 +97,7 @@ def main() -> None:
         strict=args.strict,
     )
 
-    # 2) Extract features
+    # 2) Extract features (force CPU by default to avoid Kaggle P100 sm_60 incompatibility)
     _run(
         [
             sys.executable,
@@ -108,6 +108,8 @@ def main() -> None:
             str(processed),
             "--model",
             args.pose_weights,
+            "--device",
+            "cpu",
         ],
         strict=args.strict,
     )

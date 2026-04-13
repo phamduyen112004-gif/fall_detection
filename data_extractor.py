@@ -95,11 +95,11 @@ def load_csv_pairs(csv_path: Path) -> list[tuple[Path, int]]:
     return rows
 
 
-def _extract_vec_from_bgr(frame_bgr: np.ndarray, model: YOLO) -> np.ndarray | None:
+def _extract_vec_from_bgr(frame_bgr: np.ndarray, model: YOLO, device: str) -> np.ndarray | None:
     """Một khung BGR -> vector (60,) hoặc None nếu bỏ qua."""
     frame_bgr = cv2.resize(frame_bgr, (IMGSZ, IMGSZ), interpolation=cv2.INTER_LINEAR)
     h, w = frame_bgr.shape[:2]
-    results = model.predict(frame_bgr, imgsz=IMGSZ, verbose=False)
+    results = model.predict(frame_bgr, imgsz=IMGSZ, verbose=False, device=device)
 
     if not results or results[0].keypoints is None or results[0].keypoints.data is None:
         return None
@@ -131,7 +131,7 @@ def _extract_vec_from_bgr(frame_bgr: np.ndarray, model: YOLO) -> np.ndarray | No
     return frame_to_vector_60(kn, (bw, bh))
 
 
-def process_video_file(video_path: Path, model: YOLO) -> np.ndarray | None:
+def process_video_file(video_path: Path, model: YOLO, device: str) -> np.ndarray | None:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return None
@@ -142,7 +142,7 @@ def process_video_file(video_path: Path, model: YOLO) -> np.ndarray | None:
         ok, frame_bgr = cap.read()
         if not ok:
             break
-        vec = _extract_vec_from_bgr(frame_bgr, model)
+        vec = _extract_vec_from_bgr(frame_bgr, model, device)
         if vec is None:
             if prev_vec is not None:
                 feats.append(prev_vec.copy())
@@ -156,7 +156,7 @@ def process_video_file(video_path: Path, model: YOLO) -> np.ndarray | None:
     return np.stack(feats, axis=0)
 
 
-def process_image_folder(folder: Path, model: YOLO) -> np.ndarray | None:
+def process_image_folder(folder: Path, model: YOLO, device: str) -> np.ndarray | None:
     files = sorted(
         f
         for f in folder.iterdir()
@@ -171,7 +171,7 @@ def process_image_folder(folder: Path, model: YOLO) -> np.ndarray | None:
         frame_bgr = cv2.imread(str(fp))
         if frame_bgr is None:
             continue
-        vec = _extract_vec_from_bgr(frame_bgr, model)
+        vec = _extract_vec_from_bgr(frame_bgr, model, device)
         if vec is None:
             if prev_vec is not None:
                 feats.append(prev_vec.copy())
@@ -184,15 +184,15 @@ def process_image_folder(folder: Path, model: YOLO) -> np.ndarray | None:
     return np.stack(feats, axis=0)
 
 
-def process_sample(path: Path, model: YOLO) -> np.ndarray | None:
+def process_sample(path: Path, model: YOLO, device: str) -> np.ndarray | None:
     """
     Một clip: thư mục ảnh (URFD) hoặc file video.
     Không dùng prev_vec giữa các clip.
     """
     if path.is_dir():
-        return process_image_folder(path, model)
+        return process_image_folder(path, model, device)
     if path.is_file() and path.suffix.lower() in VIDEO_EXTS:
-        return process_video_file(path, model)
+        return process_video_file(path, model, device)
     return None
 
 
@@ -209,6 +209,12 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--model", type=str, default="yolo11n-pose.pt")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help='Thiết bị cho YOLO: "cpu", "0", "cuda:0", hoặc "auto" (mặc định).',
+    )
     parser.add_argument("--fall-label", type=int, default=1)
     parser.add_argument("--normal-label", type=int, default=0)
     args = parser.parse_args()
@@ -232,6 +238,10 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     model = YOLO(args.model)
+    device = (args.device or "auto").strip().lower()
+    if device == "auto":
+        # An toàn mặc định: CPU (tránh lỗi CUDA trên Kaggle P100 khi torch build không hỗ trợ sm_60).
+        device = "cpu"
 
     X_list: list[np.ndarray] = []
     y_list: list[int] = []
@@ -241,7 +251,7 @@ def main() -> None:
         if not path.exists():
             tqdm.write(f"[skip] không tồn tại: {path}")
             continue
-        seq = process_sample(path, model)
+        seq = process_sample(path, model, device)
         if seq is None:
             tqdm.write(f"[skip] không đủ frame hợp lệ: {path}")
             continue
