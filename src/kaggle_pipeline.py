@@ -17,6 +17,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -81,7 +82,10 @@ def main() -> None:
         if not has_subject:
             print(f"[warn] GMDCSA24 có nhưng không thấy Subject* dưới {gmdcsa_root}.")
 
+    t0 = time.perf_counter()
+
     # 1) Prepare AIO_Dataset
+    t_prepare_0 = time.perf_counter()
     _run(
         [
             sys.executable,
@@ -96,8 +100,11 @@ def main() -> None:
         ],
         strict=args.strict,
     )
+    t_prepare_1 = time.perf_counter()
+    print(f"[time] prepare_dataset: {t_prepare_1 - t_prepare_0:.1f}s")
 
     # 2) Extract features (force CPU by default to avoid Kaggle P100 sm_60 incompatibility)
+    t_extract_0 = time.perf_counter()
     _run(
         [
             sys.executable,
@@ -113,6 +120,8 @@ def main() -> None:
         ],
         strict=args.strict,
     )
+    t_extract_1 = time.perf_counter()
+    print(f"[time] data_extractor : {t_extract_1 - t_extract_0:.1f}s")
 
     # Print quick dataset stats
     x_path = processed / "X_train.npy"
@@ -136,6 +145,7 @@ def main() -> None:
         raise SystemExit(f"Thiếu {x_path} hoặc {y_path} sau khi trích đặc trưng.")
 
     # 3) Train transformer
+    t_train_0 = time.perf_counter()
     _run(
         [
             sys.executable,
@@ -147,8 +157,11 @@ def main() -> None:
         ],
         strict=args.strict,
     )
+    t_train_1 = time.perf_counter()
+    print(f"[time] train_transform : {t_train_1 - t_train_0:.1f}s")
 
     print("[done] ckpt =", out_ckpt)
+    print(f"[time] total          : {time.perf_counter() - t0:.1f}s")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 """
 Gộp URFD (zip khung hình) và GMDCSA-24 vào AIO_Dataset/{fall,nofall}/.
 
-URFD: zip thường nằm trong `Fall`/`fall` và `ADL`/`adl` dưới thư mục gốc (ví dụ `data/raw/URFD/ADL/*.zip`).
+URFD: dữ liệu có thể là `*.zip` hoặc thư mục clip đã giải nén trong `Fall`/`fall` và `ADL`/`adl`
+(ví dụ `data/raw/URFD/ADL/adl-13-cam0-rgb/` hoặc `data/raw/URFD/ADL/*.zip`).
 
 GMDCSA-24 (Zenodo): mỗi subject có Fall/ADL (hoặc fall/adl) chứa video, kèm Fall.csv / ADL.csv.
 Có thể trỏ thẳng bản đã giải nén, ví dụ:
@@ -36,21 +37,42 @@ def _safe_stem(name: str) -> str:
     return s or "clip"
 
 
-def extract_urfd_zips(urfd_root: Path, aio_root: Path) -> int:
-    """<urfd_root>/Fall|fall/*.zip -> AIO fall/; <urfd_root>/ADL|adl/*.zip -> AIO nofall/."""
+def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
+    """<urfd_root>/Fall|fall và ADL|adl: nhận cả file .zip và thư mục clip đã giải nén."""
 
     def _extract_one_src(src_dir: Path, dest_parent: Path, tag: str) -> int:
         if not src_dir.is_dir():
             return 0
         n = 0
         dest_parent.mkdir(parents=True, exist_ok=True)
-        for zp in sorted(src_dir.glob("*.zip")):
+        seen_stems: set[str] = set()
+
+        # Case 1: zip clip (tìm đệ quy để chịu được layout Kaggle lồng thư mục)
+        for zp in sorted(src_dir.rglob("*.zip"), key=lambda x: str(x).lower()):
             stem = _safe_stem(zp.stem)
+            seen_stems.add(stem)
             out_dir = dest_parent / f"urfd_{tag}_{stem}"
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(zp, "r") as zf:
                 zf.extractall(out_dir)
-            print(f"[URFD] {zp.name} -> {out_dir}")
+            print(f"[URFD] {zp} -> {out_dir}")
+            n += 1
+
+        # Case 2: already-extracted clip folder (vd adl-13-cam0-rgb/) ngay dưới ADL/Fall
+        for p in sorted(src_dir.iterdir(), key=lambda x: x.name.lower()):
+            if not p.is_dir():
+                continue
+            stem = _safe_stem(p.name)
+            if stem in seen_stems:
+                # tránh copy trùng nếu có cả zip và folder cùng tên clip
+                continue
+            out_dir = dest_parent / f"urfd_{tag}_{stem}"
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+            shutil.copytree(p, out_dir)
+            print(f"[URFD] {p} -> {out_dir}")
             n += 1
         return n
 
@@ -69,7 +91,7 @@ def extract_urfd_zips(urfd_root: Path, aio_root: Path) -> int:
 
     if n_fall == 0 and n_adl == 0:
         print(
-            f"[warn] URFD: không thấy thư mục zip (fall/Fall hoặc adl/ADL) dưới {urfd_root}. "
+            f"[warn] URFD: không thấy clip (zip hoặc folder) dưới {urfd_root}. "
             "Dùng --urfd-root trỏ tới thư mục cha chứa ADL và Fall, ví dụ: data/raw/URFD"
         )
     return n_fall + n_adl
@@ -245,7 +267,7 @@ def main() -> None:
         "--urfd-root",
         type=Path,
         default=Path("URFD_Raw"),
-        help="Thư mục cha chứa Fall|fall và ADL|adl với file .zip (vd. data/raw/URFD)",
+        help="Thư mục cha chứa Fall|fall và ADL|adl với clip dạng .zip hoặc thư mục (vd. data/raw/URFD)",
     )
     ap.add_argument("--gmdcsa-root", type=Path, default=Path("GMDCSA_Raw"))
     ap.add_argument("--out", type=Path, default=Path("AIO_Dataset"))
@@ -264,7 +286,7 @@ def main() -> None:
 
     n_urfd = 0
     if not args.skip_urfd and args.urfd_root.is_dir():
-        n_urfd = extract_urfd_zips(args.urfd_root, aio)
+        n_urfd = extract_urfd_clips(args.urfd_root, aio)
     elif not args.skip_urfd:
         print(f"[warn] Không thấy {args.urfd_root} — bỏ qua URFD.")
 
