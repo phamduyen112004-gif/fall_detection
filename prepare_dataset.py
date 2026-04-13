@@ -26,6 +26,7 @@ from pathlib import Path
 FALL_FOLDER_NAMES = ("Fall", "fall", "FALL")
 ADL_FOLDER_NAMES = ("ADL", "adl", "Adl")
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 # URFD: thư mục zip theo từng bản phát hành (chữ hoa / thường).
 URFD_FALL_ZIP_DIRS = ("fall", "Fall", "FALL")
@@ -39,6 +40,15 @@ def _safe_stem(name: str) -> str:
 
 def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
     """<urfd_root>/Fall|fall và ADL|adl: nhận cả file .zip và thư mục clip đã giải nén."""
+
+    def _has_frame_images(folder: Path) -> bool:
+        # Chỉ coi là clip folder khi có ảnh frame thật sự, tránh copy nhầm thư mục trung gian.
+        if not folder.is_dir():
+            return False
+        for p in folder.rglob("*"):
+            if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES:
+                return True
+        return False
 
     def _extract_one_src(src_dir: Path, dest_parent: Path, tag: str) -> int:
         if not src_dir.is_dir():
@@ -63,6 +73,8 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
         # Case 2: already-extracted clip folder (vd adl-13-cam0-rgb/) ngay dưới ADL/Fall
         for p in sorted(src_dir.iterdir(), key=lambda x: x.name.lower()):
             if not p.is_dir():
+                continue
+            if not _has_frame_images(p):
                 continue
             stem = _safe_stem(p.name)
             if stem in seen_stems:
