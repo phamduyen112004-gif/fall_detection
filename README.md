@@ -33,6 +33,8 @@ Trên GitHub, workflow `.github/workflows/ci.yml` chạy `pytest tests/` khi pus
 
 **Kaggle:** dùng `kaggle_notebook_cells.md` (6 cell) theo flow **clone repo → cài dependencies → set `FALL_DATASET_ROOT` (trỏ Kaggle Input) → chạy `python -m src.kaggle_pipeline --strict`**.
 
+**Lưu ý CI:** workflow CI chỉ cài `requirements-ci.txt` (nhẹ) để tránh lỗi cài `PyQt5`/`torch` trên runner; chạy app/train vẫn dùng `requirements.txt`.
+
 Kaggle quickstart (tóm tắt):
 
 ```python
