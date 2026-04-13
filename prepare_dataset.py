@@ -36,7 +36,7 @@ def _safe_stem(name: str) -> str:
     return s or "clip"
 
 
-def extract_urfd_zips(urfd_root: Path, aio_root: Path) -> None:
+def extract_urfd_zips(urfd_root: Path, aio_root: Path) -> int:
     """<urfd_root>/Fall|fall/*.zip -> AIO fall/; <urfd_root>/ADL|adl/*.zip -> AIO nofall/."""
 
     def _extract_one_src(src_dir: Path, dest_parent: Path, tag: str) -> int:
@@ -72,6 +72,7 @@ def extract_urfd_zips(urfd_root: Path, aio_root: Path) -> None:
             f"[warn] URFD: không thấy thư mục zip (fall/Fall hoặc adl/ADL) dưới {urfd_root}. "
             "Dùng --urfd-root trỏ tới thư mục cha chứa ADL và Fall, ví dụ: data/raw/URFD"
         )
+    return n_fall + n_adl
 
 
 def subject_slug(subject_dir: Path) -> str:
@@ -207,8 +208,9 @@ def _copy_gmdcsa_clip(src: Path, dest_parent: Path, slug: str) -> None:
     print(f"[GMDCSA] {src} -> {dest}")
 
 
-def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> None:
+def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> int:
     """GMDCSA-24: Subject */Fall|fall hoặc ADL|adl, hoặc chỉ số từ Fall.csv / ADL.csv (Zenodo)."""
+    n_total = 0
     for subj_dir in sorted(gmdcsa_root.iterdir(), key=lambda p: p.name.lower()):
         if not subj_dir.is_dir():
             continue
@@ -216,13 +218,18 @@ def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> None:
         fall_v, adl_v = _collect_gmdcsa_subject_videos(subj_dir)
         for vid in fall_v:
             _copy_gmdcsa_clip(vid, aio_root / "fall", slug)
+            n_total += 1
         for vid in adl_v:
             _copy_gmdcsa_clip(vid, aio_root / "nofall", slug)
+            n_total += 1
         if not fall_v and not adl_v:
             print(
                 f"[warn] GMDCSA {subj_dir.name}: không thấy video. "
                 "Cần thư mục Fall/ADL chứa .mp4 hoặc file .mp4 trùng tên trong Fall.csv/ADL.csv."
             )
+    if n_total == 0:
+        print(f"[warn] GMDCSA: không copy được video nào từ {gmdcsa_root}.")
+    return n_total
 
 
 def main() -> None:
@@ -244,23 +251,32 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("AIO_Dataset"))
     ap.add_argument("--skip-urfd", action="store_true")
     ap.add_argument("--skip-gmdcsa", action="store_true")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail nếu không chuẩn bị được clip nào (URFD+GMDCSA đều rỗng).",
+    )
     args = ap.parse_args()
 
     aio = args.out
     (aio / "fall").mkdir(parents=True, exist_ok=True)
     (aio / "nofall").mkdir(parents=True, exist_ok=True)
 
+    n_urfd = 0
     if not args.skip_urfd and args.urfd_root.is_dir():
-        extract_urfd_zips(args.urfd_root, aio)
+        n_urfd = extract_urfd_zips(args.urfd_root, aio)
     elif not args.skip_urfd:
         print(f"[warn] Không thấy {args.urfd_root} — bỏ qua URFD.")
 
+    n_gmdcsa = 0
     if not args.skip_gmdcsa and args.gmdcsa_root.is_dir():
-        copy_gmdcsa_videos(args.gmdcsa_root, aio)
+        n_gmdcsa = copy_gmdcsa_videos(args.gmdcsa_root, aio)
     elif not args.skip_gmdcsa:
         print(f"[warn] Không thấy {args.gmdcsa_root} — bỏ qua GMDCSA.")
 
     print(f"Hoàn tất. Cấu trúc: {aio}/fall, {aio}/nofall")
+    if args.strict and (n_urfd + n_gmdcsa) == 0:
+        raise SystemExit("Không chuẩn bị được clip nào (URFD+GMDCSA rỗng).")
 
 
 if __name__ == "__main__":

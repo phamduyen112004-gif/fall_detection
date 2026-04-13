@@ -31,7 +31,21 @@ pytest tests/ -q
 
 Trên GitHub, workflow `.github/workflows/ci.yml` chạy `pytest tests/` khi push hoặc PR vào `main` / `master`.
 
-**Kaggle + dữ liệu trong repo:** trong `kaggle_notebook_cells.md`, CELL 2 mặc định dùng `REPO_ROOT` → `data/raw/URFD` và `data/raw/GMDCSA24` sau khi `git clone` vào `/kaggle/working/...` (bật Internet; chỉnh tên thư mục repo nếu khác).
+**Kaggle:** dùng `kaggle_notebook_cells.md` (6 cell) theo flow **clone repo → cài dependencies → set `FALL_DATASET_ROOT` (trỏ Kaggle Input) → chạy `python -m src.kaggle_pipeline --strict`**.
+
+Kaggle quickstart (tóm tắt):
+
+```python
+GIT_URL = "https://github.com/<username>/<repo>.git"
+REPO = GIT_URL.rstrip("/").split("/")[-1].replace(".git", "")
+%cd /kaggle/working
+!rm -rf "/kaggle/working/{REPO}"
+!git clone "{GIT_URL}"
+%cd "/kaggle/working/{REPO}"
+!pip -q install -r requirements.txt
+import os; os.environ["FALL_DATASET_ROOT"] = "/kaggle/input/fall-detection-dataset"
+!python -m src.kaggle_pipeline --strict
+```
 
 **Export ONNX (tùy chọn)** — cần `pip install onnx`.
 
