@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+
+# Model / export
+*.pth
+*.onnx
+
+# Kết quả chạy cục bộ
+results/
+
+# Dữ liệu lớn (tùy repo; bỏ comment nếu không commit)
+# AIO_Dataset/
+# data/
