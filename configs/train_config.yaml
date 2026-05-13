@@ -1,80 +1,42 @@
 # =============================================================================
-# Fall Detection Transformer Training Configuration
-# Based on IEEE 2026 research optimal hyperparameters
+# Cấu hình Training - HybridFallTransformer
 # =============================================================================
+# Sử dụng: python train_transformer.py --config configs/train_config.yaml
 
-# Model Architecture
+# Data paths
+data_dir: "data/processed"
+out_model: "best_hybrid_transformer.pth"
+
+# Model architecture
 model:
-  d_model: 256                # Transformer embedding dimension
-  attention_heads: 4          # Number of attention heads
-  encoder_layers: 3          # Number of transformer encoder layers
-  feedforward_dim: 256        # Feedforward network dimension
-  dropout: 0.1                # Dropout rate
-  input_features: 60          # PIFR feature dimension
-  sequence_length: 60         # Number of frames in input sequence
+  in_features: 60
+  seq_len: 60
+  d_model: 256
+  nhead: 4
+  num_layers: 3
+  dim_feedforward: 256
+  dropout: 0.1
 
-# Optimizer Settings
-optimizer:
-  type: AdamW                 # AdamW with weight decay
-  learning_rate: 0.0005       # 5e-4
-  weight_decay: 1.0e-5       # 1e-5
-  betas: [0.9, 0.999]         # Adam beta parameters
-  eps: 1.0e-8                 # Adam epsilon
-
-# Learning Rate Scheduler
-scheduler:
-  type: ReduceLROnPlateau     # Reduce LR when validation plateaus
-  mode: max                   # Monitor validation accuracy
-  factor: 0.5                 # Multiply LR by 0.5 on plateau
-  patience: 10                # Epochs to wait before reducing LR
-  min_lr: 1.0e-6              # Minimum learning rate
-
-# Training Settings
+# Training hyperparameters
 training:
-  batch_size: 64              # Training batch size
-  max_epochs: 100             # Maximum training epochs
-  early_stopping_patience: 25 # Epochs without improvement before stopping
-  early_stopping_metric: val_accuracy  # Metric to monitor
-  gradient_clip_norm: 1.0     # Gradient clipping threshold
-  mixed_precision: false      # Enable FP16 training
+  epochs: 100
+  batch_size: 64
+  learning_rate: 0.0005
+  weight_decay: 0.00001
+  val_ratio: 0.2
+  patience: 25
+  seed: 42
+  num_workers: 4
 
-# Data Settings
-data:
-  train_split: 0.8           # Training set proportion
-  val_split: 0.1             # Validation set proportion
-  test_split: 0.1            # Test set proportion
-  num_workers: 4             # DataLoader workers
-  shuffle: true               # Shuffle training data
-
-# Data Augmentation
+# Augmentation (per Benabdennour et al. 2026)
 augmentation:
   enabled: true
-  temporal_noise: 0.02       # Gaussian noise std
-  spatial_noise: 0.01        # Keypoint perturbation
-  random_dropout: 0.1        # Frame dropout probability
-  time_shift_max: 3          # Max frames to shift
+  temporal_shift_prob: 0.5
+  temporal_shift_max: 5
+  noise_prob: 0.5
+  noise_sigma: 0.01
+  hflip_prob: 0.5
+  seed: null
 
-# Loss Function
-loss:
-  type: BCEWithLogitsLoss     # Binary cross-entropy with logits
-  pos_weight: 1.0            # Weight for positive class (fall)
-
-# Checkpointing
-checkpoint:
-  save_best_only: true        # Only save when metric improves
-  monitor: val_accuracy       # Metric to monitor
-  mode: max                   # Maximize metric
-  save_dir: "weights"         # Directory to save checkpoints
-
-# Logging
-logging:
-  log_interval: 10           # Log every N batches
-  tensorboard: true          # Enable TensorBoard logging
-  wandb: false               # Enable Weights & Biases
-  project_name: "fall-detection"
-
-# Inference Settings
-inference:
-  confidence_threshold: 0.5  # Fall detection threshold
-  min_sequence_length: 30     # Minimum frames for prediction
-  smoothing_window: 5         # Temporal smoothing window
+# Hardware
+device: "auto"  # auto, cpu, cuda, cuda:0

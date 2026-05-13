@@ -881,16 +881,28 @@ def resample_to_length(seq: NDArray[np.float64], target_len: int = 60) -> NDArra
     return (1 - weights) * seq[floor_idx] + weights * seq[ceil_idx]
 
 
-def frame_to_vector_60(keypoints: NDArray[np.float64], extractor: GeometricFeatureExtractor | None = None) -> NDArray[np.float64]:
+def frame_to_vector_60(
+    keypoints: NDArray[np.float64],
+    extractor: GeometricFeatureExtractor | None = None,
+    box_wh: tuple[float, float] | None = None,
+) -> NDArray[np.float64]:
     """
-    Convert a single frame's keypoints to 60-D PIFR feature vector.
+    Chuyển đổi keypoints của một frame thành vector đặc trưng 60-D PIFR.
 
     Args:
-        keypoints: Array of shape (17, 3) with [x, y, conf].
-        extractor: Optional pre-configured extractor instance.
+        keypoints: Array shape (17, 3) với [x, y, conf].
+        extractor: Instance extractor đã cấu hình (mặc định: tạo mới).
+        box_wh: Tuple (width, height) của bounding box - dùng để chuẩn hóa tọa độ
+                theo kích thước thực của đối tượng thay vì toàn bộ frame.
 
     Returns:
-        60-D feature vector as 1D array.
+        Vector đặc trưng 60-D dạng 1D array.
+
+    Ví dụ:
+        >>> keypoints = np.random.rand(17, 3)
+        >>> vec = frame_to_vector_60(keypoints)
+        >>> print(vec.shape)
+        (60,)
     """
     if extractor is None:
         extractor = GeometricFeatureExtractor()

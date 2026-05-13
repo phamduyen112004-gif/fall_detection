@@ -1,28 +1,29 @@
 """
 Fall Detection Package.
 
-A Hybrid YOLOv11-Pose + PIFR Geometric Features + Transformer system
-for real-time human fall detection.
+Một hệ thống lai ghép YOLOv11-Pose + PIFR Geometric Features + Transformer
+để phát hiện ngã người trong thời gian thực.
 
 Modules:
-    config          - Pipeline configuration
-    pifr_features  - 60-D geometric feature extraction
-    hybrid_fall_transformer - Transformer model
-    pipeline       - End-to-end pipeline orchestrator
-    stage1_preprocess - Frame preprocessing
-    stage2_pose    - YOLOv11 pose extraction
-    stage3_kinematics - Angle computation & posture classification
-    stage4_alert   - Telegram alerting
-    viz            - Visualization utilities
-    groups         - Subject grouping for train/val split
+    config          - Cấu hình pipeline
+    pifr_features   - Trích xuất đặc trưng hình học 60-D
+    hybrid_fall_transformer - Kiến trúc Transformer model
+    pipeline        - Bộ điều phối pipeline end-to-end
+    stage1_preprocess - Tiền xử lý frame
+    stage2_pose     - Trích xuất pose từ YOLOv11
+    stage3_kinematics - Tính toán góc & phân loại tư thế
+    stage4_alert    - Cảnh báo Telegram
+    viz             - Tiện ích visualization
+    groups          - Nhóm subject cho train/val split
+    types           - Dataclass dùng chung
 
-Example:
+Ví dụ sử dụng:
     >>> from src import GeometricFeatureExtractor, HybridFallTransformer
     >>> extractor = GeometricFeatureExtractor()
     >>> model = HybridFallTransformer()
 
-Usage:
-    # Run pytest suite
+Cách chạy:
+    # Chạy bộ test
     $ PYTHONPATH=. pytest tests/ -v
 """
 
@@ -88,6 +89,11 @@ from .stage4_alert import (
 from .viz import draw_pose_overlay, COCO_EDGES
 
 # =============================================================================
+# Shared Types
+# =============================================================================
+from .types import FrameDiag
+
+# =============================================================================
 # Public API
 # =============================================================================
 __all__ = [
@@ -123,4 +129,6 @@ __all__ = [
     # Visualization
     "draw_pose_overlay",
     "COCO_EDGES",
+    # Shared types
+    "FrameDiag",
 ]

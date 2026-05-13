@@ -58,6 +58,7 @@ from src.pifr_features import (
     frame_to_vector_60,
     resample_to_length,
 )
+from src.types import FrameDiag
 from src.viz import COCO_EDGES
 from ultralytics import YOLO
 
@@ -169,18 +170,6 @@ ALERT_COOLDOWN_SEC = 10.0
 
 STREAM_RECONNECT_DELAY_SEC = 2.5
 STREAM_RECONNECT_BACKOFF_MAX = 8.0
-
-
-@dataclass
-class FrameDiag:
-    """Per-frame diagnostics for display and alerting."""
-
-    mean_kpt_conf: float | None
-    torso_deg: float | None
-    nose_ankle_deg: float | None
-    posture: str
-    fall_confirmed: bool
-    fall_prob: float | None = None
 
 
 class TelegramNotifier:

@@ -77,20 +77,39 @@ class HybridFallTransformer(nn.Module):
         pooled = h.mean(dim=1)
         return self.head(pooled)
 
-    def predict(self, x: torch.Tensor, return_probs: bool = True) -> torch.Tensor:
+    def predict(
+        self,
+        x: torch.Tensor | np.ndarray,
+        return_probs: bool = True,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """
-        Inference convenience method.
+        Phương thức inference tiện lợi.
 
         Args:
-            x: Input tensor/array of shape (B, seq_len, feature_dim), typically (B, 60, 60).
-            return_probs: If True, return sigmoid probability [0,1]. If False, return raw logit.
+            x: Tensor input shape (B, seq_len, feature_dim), thường là (B, 60, 60).
+            return_probs: Nếu True, trả về xác suất sigmoid [0,1]. Nếu False, trả về raw logit.
+            device: Thiết bị để chạy inference (mặc định: tự động phát hiện).
 
         Returns:
-            Probability scores or logits.
+            Tensor chứa probability scores hoặc logits.
         """
         self.eval()
+
+        # Xác định thiết bị
+        if device is None:
+            device = next(self.parameters()).device
+        elif isinstance(device, str):
+            device = torch.device(device)
+
+        # Chuyển numpy array sang tensor nếu cần
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).float()
+
+        # Đảm bảo tensor trên đúng thiết bị
+        x = x.to(device)
+
+        # Inference với torch.no_grad() và model.eval()
         with torch.no_grad():
             logits = self.forward(x)
             if return_probs:

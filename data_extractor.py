@@ -128,7 +128,9 @@ def _extract_vec_from_bgr(frame_bgr: np.ndarray, model: YOLO, device: str) -> np
     else:
         bw, bh = float(w), float(h)
 
-    return frame_to_vector_60(kn, (bw, bh))
+    # box_wh: tuple (width, height) của bounding box - dùng để chuẩn hóa tọa độ
+    # Tuy nhiên do hàm extract() đã nhận normalized keypoints nên không cần box_wh
+    return frame_to_vector_60(kn)
 
 
 def process_video_file(video_path: Path, model: YOLO, device: str) -> np.ndarray | None:

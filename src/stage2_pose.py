@@ -1,9 +1,16 @@
-"""Giai đoạn 2: YOLOv11n-pose — 17 keypoint COCO, chuẩn hóa, lọc confidence."""
+"""Giai đoạn 2: YOLOv11n-pose — 17 keypoint COCO, chuẩn hóa, lọc confidence.
+
+Module trích xuất 17 keypoints COCO từ YOLOv11-Pose model.
+- Đầu ra: tọa độ đã chuẩn hóa về [0,1], confidence giữ nguyên
+- Lọc: chỉ giữ lại detection có mean_conf >= min_mean_keypoint_conf
+- Chọn: người có mean confidence cao nhất nếu có nhiều người trong frame
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import numpy as np
+import torch
 
 from ultralytics import YOLO
 
@@ -31,6 +38,8 @@ class PoseFrame:
 
 
 class PoseExtractor:
+    """Trích xuất 17 COCO keypoints từ YOLOv11-Pose với chuẩn hóa và lọc confidence."""
+
     def __init__(
         self,
         config: PipelineConfig | None = None,
@@ -38,14 +47,28 @@ class PoseExtractor:
     ) -> None:
         self.config = config or PipelineConfig()
         self._model = model if model is not None else YOLO(self.config.pose_model)
+        # Đảm bảo model ở chế độ evaluation
+        self._model.model.eval() if hasattr(self._model, 'model') else None
 
     def extract(self, frame_bgr_640: np.ndarray) -> PoseFrame | None:
+        """
+        Trích xuất keypoints từ một frame BGR đã resize về 640x640.
+
+        Args:
+            frame_bgr_640: Frame BGR đã được resize về kích thước input_size.
+
+        Returns:
+            PoseFrame nếu phát hiện người, None nếu không có detection hợp lệ.
+        """
         h, w = frame_bgr_640.shape[:2]
-        results = self._model.predict(
-            frame_bgr_640,
-            imgsz=self.config.input_size[0],
-            verbose=False,
-        )
+
+        # Inference với torch.no_grad() context
+        with torch.no_grad():
+            results = self._model.predict(
+                frame_bgr_640,
+                imgsz=self.config.input_size[0],
+                verbose=False,
+            )
         if not results:
             return None
         r0 = results[0]

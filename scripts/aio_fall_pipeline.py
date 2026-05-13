@@ -1,36 +1,34 @@
 #!/usr/bin/env python3
 """All-in-one fall-detection dataset pipeline.
 
-This module implements two phases requested by the user:
+Module thực hiện hai giai đoạn theo yêu cầu người dùng:
 
-Phase 1: Label harmonization and AIO dataset merging.
-- Reads dataset-specific annotation files / YOLO labels.
-- Remaps source class IDs into a binary scheme:
-  * 0 = Fall
-  * 1 = No-Fall
-- Copies images and normalized labels into a unified AIO structure.
-- Prefixes filenames with the dataset origin to avoid collisions.
+Giai đoạn 1: Chuẩn hóa nhãn và gộp dataset AIO.
+- Đọc annotation files / YOLO labels theo dataset cụ thể.
+- Ánh xạ class IDs thành binary scheme:
+  * 0 = Fall (Ngã)
+  * 1 = No-Fall (Không ngã)
+- Copy images và normalized labels vào cấu trúc AIO thống nhất.
+- Prefix filenames với dataset origin để tránh trùng lặp.
 
-Phase 2: Keypoint extraction and sliding-window sequence generation.
-- Loads YOLOv11-Pose (`yolo11n-pose.pt` by default).
-- Extracts 17 COCO keypoints per frame.
-- Normalizes x/y to [0, 1] by image size and flattens to (51,).
-- Applies quality filtering and imputation for low-confidence frames.
-- Generates fixed-length sliding windows (T=60, stride=15).
-- Saves `.npy` samples for PyTorch training.
+Giai đoạn 2: Trích xuất keypoints và sinh sliding-window sequence.
+- Load YOLOv11-Pose (`yolo11n-pose.pt` mặc định).
+- Trích xuất 17 COCO keypoints mỗi frame.
+- Normalize x/y về [0, 1] theo image size và flatten về (51,).
+- Áp dụng quality filtering và imputation cho low-confidence frames.
+- Sinh fixed-length sliding windows (T=60, stride=15).
+- Lưu `.npy` samples cho PyTorch training.
 
-Important algorithmic rules embedded here follow the user's requested protocol:
-- Fall class is reserved for horizontal postures completely on the ground.
-- No-Fall includes walking, standing, bending, and transitional actions
-  such as sitting, squatting, and kneeling.
-- If mean keypoint confidence < 0.2, the frame is imputed from the previous
-  valid frame when possible; otherwise it is marked missing.
-- If a clip has too many missing frames, the whole sequence is discarded.
-- For LE2I and MCFD, fall windows are constrained to contain the true impact
-  region and no-fall windows must end at least 30 frames before a fall starts.
+Các quy tắc thuật toán quan trọng:
+- Fall class chỉ dành cho horizontal postures trên mặt đất.
+- No-Fall bao gồm walking, standing, bending, và transitional actions
+  như sitting, squatting, và kneeling.
+- Nếu mean keypoint confidence < 0.2, frame được impute từ frame trước đó.
+- Nếu clip có quá nhiều missing frames, sequence bị discard.
+- Với LE2I và MCFD, fall windows được giới hạn chứa true impact region.
 
-The script is intentionally modular and OOP-based so it can be adapted to
-additional datasets or label mappings.
+Script được viết theo hướng modular và OOP để dễ dàng
+mở rộng cho các datasets hoặc label mappings khác.
 """
 
 from __future__ import annotations

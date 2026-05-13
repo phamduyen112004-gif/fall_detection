@@ -17,7 +17,8 @@ import cv2
 import numpy as np
 
 from src.config import PipelineConfig
-from src.pipeline import FrameDiag, HybridFallPipeline
+from src.pipeline import HybridFallPipeline
+from src.types import FrameDiag
 from src.stage4_alert import TelegramAlerter
 
 

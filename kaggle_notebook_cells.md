@@ -1,89 +1,71 @@
-# Hybrid YOLOv11-Pose + Transformer — Kaggle Notebook (cách chạy đơn giản)
+# Hybrid YOLOv11-Pose + Transformer — Hướng dẫn chạy Local
 
-Nếu bạn muốn chạy "gọn" như bạn đề xuất (clone repo + 1 lệnh), hãy dùng **5 cell** dưới đây.
-
-Yêu cầu: bật Internet (để clone repo và cài thư viện), và đã add dataset trong tab **Input**.
+## Cách chạy đơn giản nhất
 
 ---
 
-## CELL 1: Clone repository
+## Bước 1: Clone repository
 
-```python
-GIT_URL = "https://github.com/<username>/<repo>.git"  # <-- đổi URL repo của bạn
-REPO = GIT_URL.rstrip("/").split("/")[-1].replace(".git", "")
-
-%cd /kaggle/working
-!rm -rf "/kaggle/working/{REPO}"
-!git clone "{GIT_URL}"
-%cd "/kaggle/working/{REPO}"
-print("Cloned:", REPO)
+```bash
+git clone https://github.com/<username>/<repo>.git
+cd <repo-name>
 ```
 
 ---
 
-## CELL 2: Install dependencies
+## Bước 2: Cài dependencies
 
-```python
-%cd "/kaggle/working/{REPO}"
-!pip -q install -r requirements.txt
+```bash
+pip install -r requirements.txt
 ```
 
 ---
 
-## CELL 3: Optional env override (dataset path)
+## Bước 3: Set dataset path (nếu có dataset)
 
 ```python
 import os
 
-# Dataset paths for GMDCSA and URFD
-os.environ["FALL_DATASET_ROOT"] = "/kaggle/input/fall-detection-dataset"
-os.environ["FALL_WORK_ROOT"] = "/kaggle/working"
+# Dataset paths - sửa đường dẫn phù hợp với máy bạn
+os.environ["FALL_DATASET_ROOT"] = "E:/datasets/fall-detection"
+os.environ["FALL_WORK_ROOT"] = "E:/workspace/fall-detection"
 
-# LE2I dataset path
-os.environ["LE2I_DATASET_ROOT"] = "/kaggle/input/le2i-dataset"
-
-print("FALL_DATASET_ROOT =", os.environ.get("FALL_DATASET_ROOT", "(default in src.kaggle_pipeline)"))
-print("FALL_WORK_ROOT    =", os.environ.get("FALL_WORK_ROOT", "(default: /kaggle/working)"))
-print("LE2I_DATASET_ROOT =", os.environ.get("LE2I_DATASET_ROOT", "(default: not set)"))
+print("FALL_DATASET_ROOT =", os.environ.get("FALL_DATASET_ROOT", "(default)"))
+print("FALL_WORK_ROOT    =", os.environ.get("FALL_WORK_ROOT", "(default)"))
 ```
 
 ---
 
-## CELL 4: Run full pipeline
+## Bước 4: Chạy pipeline
 
-```python
-%cd "/kaggle/working/{REPO}"
-!python -m src.kaggle_pipeline --strict
+```bash
+python -m src.kaggle_pipeline --strict
 ```
 
 ---
 
-## CELL 5: Sanity check outputs
+## Bước 5: Kiểm tra kết quả
 
-```python
-%cd "/kaggle/working/{REPO}"
-!python -m src.kaggle_sanity --strict
+```bash
+python -m src.kaggle_sanity --strict
 ```
 
 ---
+
+## Cấu trúc dataset mong đợi
+
+```
+FALL_DATASET_ROOT/
+├── URFD/
+│   └── (Fall|fall, ADL|adl)/*.zip
+├── GMDCSA24/
+│   └── Subject */(Fall|fall, ADL|adl)/*.mp4
+└── LE2I/
+    └── (Fall|fall, ADL|adl)/*.avi/*.mp4
+```
 
 ## Ghi chú
 
-1. **CELL 1:** Bật **Internet** để `git clone` chạy được.
-2. **CELL 2:** Nếu `pip install -r requirements.txt` lỗi do môi trường Kaggle, thử "Restart session" rồi chạy lại CELL 2.
-3. **CELL 3:** Nếu dataset Input của bạn không phải `/kaggle/input/fall-detection-dataset`, hãy set `FALL_DATASET_ROOT` đúng tên. Cấu trúc mong đợi:
-   - `FALL_DATASET_ROOT/URFD/(Fall|fall, ADL|adl)/*.zip`
-   - `FALL_DATASET_ROOT/GMDCSA24/Subject */(Fall|fall, ADL|adl)/*.mp4`
-   - `FALL_DATASET_ROOT/LE2I/(Fall|fall, ADL|adl)/*.avi/*.mp4`
-   - `FALL_DATASET_ROOT/LE2I/LE2I_Fall_Annotation.csv` (tuỳ chọn, cho Zone-based Protocol)
-4. **CELL 4:** Khuyến nghị bật **GPU** để trích đặc trưng và train nhanh hơn. Trong log của CELL 4 sẽ có thống kê nhanh: `N`, `fall/nofall`, `X_shape` và `groups unique`. Checkpoint xuất ra: `/kaggle/working/best_hybrid_transformer.pth`.
-5. **LE2I Zone-based Protocol:** Để bật xử lý LE2I với Zone-based Protocol:
-   ```bash
-   !python scripts/prepare_le2i_dataset.py --source /kaggle/input/le2i
-   ```
-   Sau đó chạy:
-   ```bash
-   !python data_extractor.py --dataset AIO_Dataset/le2i --output-dir extracted_le2i
-   ```
-6. **Checkpoint saved:** `/kaggle/working/best_hybrid_transformer.pth`
-7. **Model ready for inference:** Sử dụng `app_inference.py` hoặc `gui_app.py` để test.
+1. **Checkpoint output:** `runs/best_hybrid_transformer.pth`
+2. **Inference:** Sử dụng `app_inference.py` hoặc `gui_app.py` để test model
+3. **GPU:** Khuyến nghị bật GPU để train nhanh hơn

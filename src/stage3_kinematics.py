@@ -153,30 +153,30 @@ class FallTemporalFilter:
 
 class KinematicsAnalyzer:
     """
-    Wrapper class that combines pose angle computation and posture classification.
+    Wrapper class kết hợp tính góc pose và phân loại tư thế.
 
-    Provides a unified interface for kinematic analysis of pose keypoints.
+    Cung cấp interface thống nhất cho phân tích động học của pose keypoints.
     """
 
     def __init__(self, cfg: PipelineConfig | None = None) -> None:
         """
-        Initialize KinematicsAnalyzer.
+        Khởi tạo KinematicsAnalyzer.
 
         Args:
-            cfg: Pipeline configuration with angle thresholds.
+            cfg: Cấu hình pipeline với ngưỡng góc.
         """
         self.cfg = cfg or PipelineConfig()
         self.fall_filter = FallTemporalFilter(self.cfg)
 
     def analyze(self, keypoints: np.ndarray) -> tuple[Posture, float | None, float | None]:
         """
-        Analyze pose keypoints and return posture classification.
+        Phân tích pose keypoints và trả về phân loại tư thế.
 
         Args:
-            keypoints: Array of shape (17, 3) with [x, y, conf].
+            keypoints: Array shape (17, 3) với [x, y, conf].
 
         Returns:
-            Tuple of (posture, torso_deg, nose_ankle_deg).
+            Tuple (posture, torso_deg, nose_ankle_deg).
         """
         torso_deg, nose_ankle_deg = compute_pose_angles(keypoints)
         posture = classify_posture(torso_deg, nose_ankle_deg, self.cfg)
@@ -184,17 +184,17 @@ class KinematicsAnalyzer:
 
     def is_fall(self, keypoints: np.ndarray) -> bool:
         """
-        Check if pose indicates a fall (with temporal filtering).
+        Kiểm tra xem pose có chỉ ra ngã không (với temporal filtering).
 
         Args:
-            keypoints: Array of shape (17, 3) with [x, y, conf].
+            keypoints: Array shape (17, 3) với [x, y, conf].
 
         Returns:
-            True if fall is confirmed by temporal filter.
+            True nếu ngã được xác nhận bởi temporal filter.
         """
         posture, _, _ = self.analyze(keypoints)
         return self.fall_filter.update(posture)
 
     def reset(self) -> None:
-        """Reset temporal filter state."""
+        """Reset trạng thái temporal filter."""
         self.fall_filter.acknowledge_fall()
