@@ -132,8 +132,11 @@ fall-detection/
 ├── train_transformer.py        # Training script
 ├── prepare_dataset.py          # Dataset preparation
 ├── data_extractor.py          # Feature extraction
-├── requirements.txt            # Full dependencies
-├── requirements-ci.txt         # CI dependencies
+├── le2i_zone_based_extractor.py  # Zone-based LE2I extraction
+├── evaluate.py                # Comprehensive evaluation
+├── benchmark_fps.py           # FPS benchmark on videos
+├── final_evaluation.py        # Full eval + SOTA comparison + LaTeX table
+├── requirements.txt           # Full dependencies
 └── README.md
 ```
 
