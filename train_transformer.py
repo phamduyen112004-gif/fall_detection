@@ -323,7 +323,8 @@ Examples:
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--patience", type=int, default=25)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=4,
+                        help="DataLoader workers (default: 4, set 0 for debugging)")
     parser.add_argument(
         "--device",
         type=str,
@@ -460,20 +461,25 @@ Examples:
     criterion = nn.BCEWithLogitsLoss()
 
     # ─── DataLoaders ───
+    # Optimized settings for fast training on edge devices
+    persistent_workers = args.num_workers > 0
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        drop_last=False,
+        persistent_workers=persistent_workers,
         pin_memory=device.type == "cuda",
+        prefetch_factor=2 if args.num_workers > 0 else None,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
+        persistent_workers=persistent_workers,
         pin_memory=device.type == "cuda",
+        prefetch_factor=2 if args.num_workers > 0 else None,
     )
 
     # ─── Training Loop ───

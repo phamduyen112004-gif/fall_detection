@@ -19,13 +19,21 @@ Modules:
 Example:
     >>> from src import GeometricFeatureExtractor, HybridFallTransformer
     >>> extractor = GeometricFeatureExtractor()
-    >>> model = HybridFallTransformer(seq_len=60, feature_dim=60)
+    >>> model = HybridFallTransformer()
+
+Usage:
+    # Run pytest suite
+    $ PYTHONPATH=. pytest tests/ -v
 """
+
+from __future__ import annotations
 
 __version__ = "1.0.0"
 __author__ = "Fall Detection Team"
 
-# Core feature extraction
+# =============================================================================
+# Core Feature Extraction
+# =============================================================================
 from .pifr_features import (
     GeometricFeatureExtractor,
     extract_pifr_features,
@@ -39,19 +47,25 @@ from .pifr_features import (
     resample_to_length,
 )
 
-# Model architecture
+# =============================================================================
+# Model Architecture
+# =============================================================================
 from .hybrid_fall_transformer import (
     HybridFallTransformer,
     SinusoidalPositionalEncoding,
 )
 
+# =============================================================================
 # Configuration
+# =============================================================================
 from .config import (
     PipelineConfig,
     DEFAULT_CONFIG,
 )
 
-# Pipeline components
+# =============================================================================
+# Pipeline Components
+# =============================================================================
 from .stage2_pose import (
     PoseExtractor,
     PoseFrame,
@@ -68,10 +82,14 @@ from .stage4_alert import (
     encode_jpeg_bgr,
 )
 
+# =============================================================================
 # Visualization
+# =============================================================================
 from .viz import draw_pose_overlay, COCO_EDGES
 
+# =============================================================================
 # Public API
+# =============================================================================
 __all__ = [
     # Version
     "__version__",

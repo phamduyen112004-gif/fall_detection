@@ -62,18 +62,21 @@ class TestHybridFallTransformer:
     def test_model_predict_method(self, model, sample_sequence):
         """predict() method should work with numpy input."""
         prediction = model.predict(sample_sequence)
-        assert isinstance(prediction, (float, np.floating))
+        # predict() returns tensor of shape (1, 1) for single sample
+        assert isinstance(prediction, torch.Tensor)
+        assert prediction.shape[-1] == 1  # Last dim should be 1
 
     def test_model_predict_batch(self, model):
         """predict() method should work with batch numpy input."""
         batch = np.random.rand(8, 60, 60).astype(np.float32)
         predictions = model.predict(batch)
-        assert len(predictions) == 8
+        assert predictions.shape == (8, 1)
 
     def test_model_predict_probs(self, model, sample_sequence):
         """predict() with return_probs=True should return probability."""
         prob = model.predict(sample_sequence, return_probs=True)
-        assert 0.0 <= prob <= 1.0, f"Probability should be in [0, 1], got {prob}"
+        # Check all values are in [0, 1] range
+        assert torch.all(prob >= 0.0) and torch.all(prob <= 1.0)
 
     def test_model_deterministic(self, model):
         """Model should produce same output with same input (eval mode)."""

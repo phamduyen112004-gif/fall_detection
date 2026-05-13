@@ -7,3 +7,39 @@ pytest>=7.0.0
 requests>=2.31.0
 torch>=2.0.0
 PyQt5>=5.15.0
+
+# Workspace Cleanup
+import os
+import shutil
+
+# Directories and files to clean up
+target_dirs = [
+    '/kaggle/working/fall_detection_results',
+    '/kaggle/working/runs',
+    '/kaggle/working/wandb'
+]
+target_files = [
+    '/kaggle/working/*.pt',
+    '/kaggle/working/*.cache'
+]
+
+# Remove directories
+for dir_path in target_dirs:
+    if os.path.exists(dir_path):
+        try:
+            shutil.rmtree(dir_path)
+            print(f"Removed directory: {dir_path}")
+        except Exception as e:
+            print(f"Failed to remove directory {dir_path}: {e}")
+
+# Remove files
+for file_pattern in target_files:
+    for file_path in glob.glob(file_pattern):
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"Removed file: {file_path}")
+            except Exception as e:
+                print(f"Failed to remove file {file_path}: {e}")
+
+print("🗑️ Cleanup complete! All temporary files removed. You can now download [Final_Thesis_Results.zip] safely.")

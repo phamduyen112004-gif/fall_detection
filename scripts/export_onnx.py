@@ -152,6 +152,28 @@ def export_to_onnx(
     return output_path
 
 
+def get_optimal_providers() -> list[str]:
+    """
+    Get optimal ONNX Runtime execution providers based on available hardware.
+
+    Returns providers in order of preference (first available will be used).
+    """
+    try:
+        import onnxruntime
+    except ImportError:
+        return ["CPUExecutionProvider"]  # Fallback if onnxruntime not installed
+
+    available = onnxruntime.get_available_providers()
+
+    # Priority order: GPU > CPU
+    priority = [
+        "CUDAExecutionProvider",      # NVIDIA GPU
+        "CPUExecutionProvider",        # CPU fallback
+    ]
+
+    return [p for p in priority if p in available]
+
+
 def validate_onnx(onnx_path: str | Path) -> bool:
     """
     Validate the exported ONNX model by comparing outputs with PyTorch model.
@@ -174,8 +196,15 @@ def validate_onnx(onnx_path: str | Path) -> bool:
         print(f"ONNX file not found: {onnx_path}")
         return False
 
+    # Get optimal providers
+    providers = get_optimal_providers()
+    print(f"ONNX Runtime providers (in priority order): {providers}")
+
     # Run ONNX Runtime inference
-    session = onnxruntime.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    session_opts = onnxruntime.SessionOptions()
+    session_opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    session = onnxruntime.InferenceSession(str(onnx_path), sess_options=session_opts, providers=providers)
 
     # Get input/output names
     onnx_input = session.get_inputs()[0].name
@@ -226,6 +255,10 @@ def validate_pytorch_vs_onnx(
         print(f"ONNX file not found: {onnx_path}")
         return False
 
+    # Get optimal providers
+    providers = get_optimal_providers()
+    print(f"ONNX Runtime using providers: {providers}")
+
     # Create dummy input
     dummy_input = torch.randn(1, 60, 60)
 
@@ -233,8 +266,10 @@ def validate_pytorch_vs_onnx(
     with torch.no_grad():
         pytorch_output = pytorch_model.predict(dummy_input).numpy()
 
-    # ONNX Runtime inference
-    session = onnxruntime.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    # ONNX Runtime inference with optimized providers
+    session_opts = onnxruntime.SessionOptions()
+    session_opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = onnxruntime.InferenceSession(str(onnx_path), sess_options=session_opts, providers=providers)
     onnx_input = session.get_inputs()[0].name
     onnx_output = session.get_outputs()[0].name
     onnx_result = session.run([onnx_output], {onnx_input: dummy_input.numpy()})[0]

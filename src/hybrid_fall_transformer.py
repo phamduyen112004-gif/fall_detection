@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -25,7 +26,8 @@ class SinusoidalPositionalEncoding(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, seq, d_model)
-        return self.pe[:, : x.size(1), :]
+        # PE buffer is (1, max_len, d_model), broadcast to match batch size
+        return self.pe[:, : x.size(1), :].expand(x.size(0), -1, -1)
 
 
 class HybridFallTransformer(nn.Module):
@@ -75,17 +77,22 @@ class HybridFallTransformer(nn.Module):
         pooled = h.mean(dim=1)
         return self.head(pooled)
 
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, return_probs: bool = True) -> torch.Tensor:
         """
-        Inference convenience method that returns probability scores.
+        Inference convenience method.
 
         Args:
-            x: Input tensor of shape (B, seq_len, feature_dim), typically (B, 60, 60).
+            x: Input tensor/array of shape (B, seq_len, feature_dim), typically (B, 60, 60).
+            return_probs: If True, return sigmoid probability [0,1]. If False, return raw logit.
 
         Returns:
-            Probability scores in [0, 1] after sigmoid activation.
+            Probability scores or logits.
         """
         self.eval()
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x).float()
         with torch.no_grad():
             logits = self.forward(x)
-            return torch.sigmoid(logits)
+            if return_probs:
+                return torch.sigmoid(logits)
+            return logits

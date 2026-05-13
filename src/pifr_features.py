@@ -576,12 +576,98 @@ class GeometricFeatureExtractor:
             )
 
         batch_size = keypoints_batch.shape[0]
+        # Pre-allocate output array for efficiency
         features = np.zeros((batch_size, 60), dtype=np.float64)
 
+        # Vectorized extraction using broadcasting
+        # Extract all keypoints flattened at once
+        features[:, :51] = keypoints_batch.reshape(batch_size, -1)
+
+        # Compute geometric features for each sample in batch
         for i in range(batch_size):
-            features[i] = self.extract(keypoints_batch[i])
+            kp = keypoints_batch[i]
+            # Center of mass
+            valid_mask = kp[:, 2] >= self.conf_threshold
+            valid_points = kp[valid_mask, :2]
+            if len(valid_points) > 0:
+                features[i, 51] = float(np.mean(valid_points[:, 0]))
+                features[i, 52] = float(np.mean(valid_points[:, 1]))
+
+            # Vectorized angle computation
+            angles = self._compute_all_angles_batch(kp)
+            features[i, 53:60] = angles
 
         return features
+
+    def _compute_all_angles_batch(self, keypoints: NDArray[np.float64]) -> NDArray[np.float64]:
+        """
+        Compute all 7 geometric angles in one pass (vectorized).
+
+        Returns:
+            Array of 7 angles: [shoulder_nose, torso, hip, shoulder, left_leg, right_leg, nose_ankle]
+        """
+        angles = np.zeros(7, dtype=np.float64)
+        eps = self.eps
+
+        # Indices
+        N, LS, RS, LH, RH, LK, RK, LA, RA = 0, 5, 6, 11, 12, 13, 14, 15, 16
+
+        # Shoulder-Nose Angle
+        ba = keypoints[LS, :2] - keypoints[N, :2]
+        bc = keypoints[RS, :2] - keypoints[N, :2]
+        n1, n2 = np.linalg.norm(ba), np.linalg.norm(bc)
+        if n1 > eps and n2 > eps:
+            cos_a = np.clip(np.dot(ba, bc) / (n1 * n2), -1, 1)
+            angles[0] = np.arccos(cos_a)
+
+        # Torso Angle
+        mid_hip = (keypoints[LH, :2] + keypoints[RH, :2]) / 2
+        v = mid_hip - keypoints[N, :2]
+        n = np.linalg.norm(v)
+        if n > eps:
+            angles[1] = np.arccos(np.clip(v[1] / n, -1, 1))
+
+        # Hip Angle
+        v = keypoints[RH, :2] - keypoints[LH, :2]
+        n = np.linalg.norm(v)
+        if n > eps:
+            angles[2] = np.arccos(np.clip(v[0] / n, -1, 1))
+
+        # Shoulder Angle
+        v = keypoints[RS, :2] - keypoints[LS, :2]
+        n = np.linalg.norm(v)
+        if n > eps:
+            angles[3] = np.arccos(np.clip(v[0] / n, -1, 1))
+
+        # Left Leg Angle
+        if all(keypoints[i, 2] >= self.conf_threshold for i in [LH, LK, LA]):
+            v1 = keypoints[LK, :2] - keypoints[LH, :2]
+            v2 = keypoints[LA, :2] - keypoints[LK, :2]
+            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+            if n1 > eps and n2 > eps:
+                angles[4] = np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
+
+        # Right Leg Angle
+        if all(keypoints[i, 2] >= self.conf_threshold for i in [RH, RK, RA]):
+            v1 = keypoints[RK, :2] - keypoints[RH, :2]
+            v2 = keypoints[RA, :2] - keypoints[RK, :2]
+            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+            if n1 > eps and n2 > eps:
+                angles[5] = np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
+
+        # Nose-to-Ankle Angle
+        mid_ankle = (keypoints[LA, :2] + keypoints[RA, :2]) / 2
+        v = mid_ankle - keypoints[N, :2]
+        n = np.linalg.norm(v)
+        if n > eps:
+            angles[6] = np.arccos(np.clip(v[1] / n, -1, 1))
+
+        # Normalize all angles to [0, 1] if enabled
+        if self.normalize:
+            angle_max = np.pi
+            angles = np.clip(angles / angle_max, 0, 1)
+
+        return angles
 
     def get_feature_names(self) -> list[str]:
         """
@@ -771,14 +857,14 @@ SEQ_LEN = 60
 
 def resample_to_length(seq: NDArray[np.float64], target_len: int = 60) -> NDArray[np.float64]:
     """
-    Resample a sequence to a fixed length using uniform sampling.
+    Resample a sequence to a fixed length using linear interpolation.
 
     Args:
-        seq: Input array of shape (N, feature_dim).
+        seq: Input array of shape (N, feature_dim) or (N,).
         target_len: Target length for output sequence.
 
     Returns:
-        Resampled array of shape (target_len, feature_dim).
+        Resampled array of shape (target_len, feature_dim) or (target_len,).
     """
     n = len(seq)
     if n == 0:
@@ -786,8 +872,13 @@ def resample_to_length(seq: NDArray[np.float64], target_len: int = 60) -> NDArra
     if n == target_len:
         return seq.copy()
 
+    # Vectorized linear interpolation
     indices = np.linspace(0, n - 1, target_len)
-    return np.array([seq[int(i)] if i < n else seq[-1] for i in indices], dtype=np.float64)
+    floor_idx = np.floor(indices).astype(int)
+    ceil_idx = np.minimum(floor_idx + 1, n - 1)
+    weights = (indices - floor_idx).reshape(-1, 1) if seq.ndim > 1 else (indices - floor_idx)
+
+    return (1 - weights) * seq[floor_idx] + weights * seq[ceil_idx]
 
 
 def frame_to_vector_60(keypoints: NDArray[np.float64], extractor: GeometricFeatureExtractor | None = None) -> NDArray[np.float64]:

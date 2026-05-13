@@ -206,15 +206,12 @@ class SequenceAugmenter:
         seq = sequence.copy()
         noise = self._rng.normal(0, self.noise_sigma, size=seq.shape)
 
-        # Apply noise only to x and y coordinates of keypoints
-        # For each frame (60 frames), for each keypoint (17), apply to x and y
-        # Keypoint i starts at column i*3, x at i*3, y at i*3+1
-        for frame_idx in range(seq.shape[0]):
-            for kp_idx in range(17):
-                x_col = kp_idx * 3
-                y_col = kp_idx * 3 + 1
-                seq[frame_idx, x_col] += noise[frame_idx, x_col]
-                seq[frame_idx, y_col] += noise[frame_idx, y_col]
+        # Vectorized: apply noise only to x and y coordinates of keypoints
+        # Keypoint i: x at column i*3, y at column i*3+1 (for i in 0..16)
+        # x coords: columns 0, 3, 6, ..., 48 → slice [0:51:3]
+        # y coords: columns 1, 4, 7, ..., 49 → slice [1:51:3]
+        seq[:, 0:51:3] += noise[:, 0:51:3]  # x coords
+        seq[:, 1:51:3] += noise[:, 1:51:3]  # y coords
 
         # Clip to valid range [0, 1] for normalized coordinates
         seq[:, :51] = np.clip(seq[:, :51], 0.0, 1.0)
@@ -238,23 +235,14 @@ class SequenceAugmenter:
         """
         seq = sequence.copy()
 
-        # Step 1: Flip X coordinates (all keypoint x values in columns 0, 3, 6, ...)
-        # For each frame, flip all x coordinates (even indices within first 51 columns)
-        for frame_idx in range(seq.shape[0]):
-            # Flip x coordinates: new_x = 1.0 - x
-            # x coords are at columns 0, 3, 6, ... (i*3 for keypoint i)
-            for kp_idx in range(17):
-                x_col = kp_idx * 3
-                seq[frame_idx, x_col] = 1.0 - seq[frame_idx, x_col]
+        # Vectorized: flip X coordinates in one operation
+        # x coords: columns 0, 3, 6, ..., 48 → slice [0:51:3]
+        seq[:, 0:51:3] = 1.0 - seq[:, 0:51:3]
 
         # Step 2: Swap left/right keypoint columns
-        # Each keypoint has 3 columns: (x, y, conf)
-        # Left keypoint i -> Right keypoint j (where j = swap_map[i])
         seq = self._swap_keypoint_columns(seq)
 
         # Step 3: Swap left/right geometric feature columns
-        # Only geometric features that depend on left/right need swapping:
-        # - left_leg_angle (57) <-> right_leg_angle (58)
         seq = self._swap_geometric_columns(seq)
 
         return seq
