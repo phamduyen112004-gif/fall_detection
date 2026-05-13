@@ -9,8 +9,45 @@ Hai hướng suy luận:
 
 **Chuẩn bị dữ liệu**
 
+#### AIO Dataset (URFD + GMDCSA-24)
 1. `python prepare_dataset.py` — gộp URFD + GMDCSA vào `AIO_Dataset/` (tùy đường dẫn). URFD: zip trong `Fall`/`fall` và `ADL`/`adl` dưới cùng một thư mục gốc, ví dụ `--urfd-root data/raw/URFD` (file kiểu `ADL/adl-13-cam0-rgb.zip`). GMDCSA-24: `Subject N/Fall`, `Subject N/ADL` hoặc `fall`/`adl`. Ví dụ GMDCSA: `--gmdcsa-root data/raw/GMDCSA24 --skip-urfd`.
 2. `python data_extractor.py --aio-dir AIO_Dataset --out-dir data/processed` — sinh `X_train.npy`, `y_train.npy`, `groups.npy`.
+
+#### LE2I Fall Detection Dataset (với Zone-based Protocol - IEEE 2026)
+
+LE2I dataset yêu cầu annotation `start_fall`/`end_fall` để phân tách vùng Fall/ADL một cách nghiêm ngặt.
+
+1. **Chuẩn bị LE2I clips** vào `AIO_Dataset/`:
+   ```bash
+   # Nếu có annotation CSV (khuyến nghị)
+   python prepare_le2i_dataset.py --le2i-root data/raw/LE2I \
+       --out AIO_Dataset \
+       --annotation-csv data/raw/LE2I/LE2I_Fall_Annotation.csv
+
+   # Nếu không có annotation CSV (tự động phân loại fall/adl bằng tên file/folder)
+   python prepare_le2i_dataset.py --le2i-root data/raw/LE2I --out AIO_Dataset
+   ```
+   Script tự động nhận diện cấu trúc LE2I (Kaggle, Zenodo, hoặc raw folder).
+
+2. **Trích keypoint + sinh sliding window theo Zone-based Protocol**:
+   ```bash
+   python le2i_zone_based_extractor.py \
+       --aio-dir AIO_Dataset \
+       --annotation-json AIO_Dataset/_le2i_annotations.json \
+       --out-dir data/le2i_processed \
+       --val-subjects 5 \
+       --device cuda
+   ```
+
+   **Zone-based Protocol (IEEE 2026) - Phân loại nghiêm ngặt:**
+
+   | Class | Label | Rule |
+   |-------|-------|------|
+   | **Fall** | 0 | Window bao trùm hoàn toàn `[start_fall, end_fall]` |
+   | **Non-Fall (ADL)** | 1 | Window kết thúc >= 30 frames **trước** `start_fall` |
+   | **Discarded** | - | Buffer zone (30 frame trước fall), Post-fall zone, ambiguous overlaps |
+
+   **Output:** `data/le2i_processed/{train,val}/{fall,nofall}/*.npy` hoặc `X_train.npy`, `y_train.npy`, `groups.npy`
 
 **Huấn luyện**
 

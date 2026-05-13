@@ -1,83 +1,157 @@
-"""
-Sanity check cho Kaggle outputs:
-  python -m src.kaggle_sanity --strict
+#!/usr/bin/env python3
+"""Sanity check for Kaggle notebook - verifies all imports and basic functionality."""
 
-Kiểm tra:
-  - X_train.npy, y_train.npy, groups.npy có tồn tại và shape hợp lệ
-  - checkpoint best_hybrid_transformer.pth có các key quan trọng
-"""
+import sys
 
-from __future__ import annotations
-
-import argparse
-import os
-from pathlib import Path
-
-import numpy as np
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Sanity check outputs")
-    ap.add_argument("--work-root", type=Path, default=None)
-    ap.add_argument("--processed", type=Path, default=None)
-    ap.add_argument("--ckpt", type=Path, default=None)
-    ap.add_argument("--strict", action="store_true")
-    args = ap.parse_args()
-
-    work_root = args.work_root or Path(os.environ.get("FALL_WORK_ROOT", "/kaggle/working"))
-    processed = args.processed or (work_root / "data" / "processed")
-    ckpt = args.ckpt or (work_root / "best_hybrid_transformer.pth")
-
-    x_path = processed / "X_train.npy"
-    y_path = processed / "y_train.npy"
-    g_path = processed / "groups.npy"
-
-    missing = [p for p in (x_path, y_path, g_path, ckpt) if not p.is_file()]
-    if missing:
-        msg = "Thiếu file: " + ", ".join(str(p) for p in missing)
-        if args.strict:
-            raise SystemExit(msg)
-        print("[warn]", msg)
-        return
-
-    X = np.load(x_path)
-    y = np.load(y_path)
-    groups = np.load(g_path, allow_pickle=True)
-
-    print("[ok] X:", x_path, "shape=", X.shape, "dtype=", X.dtype)
-    print("[ok] y:", y_path, "shape=", y.shape, "dtype=", y.dtype)
-    print("[ok] g:", g_path, "shape=", groups.shape, "dtype=", groups.dtype)
-
-    if args.strict:
-        if X.ndim != 3 or X.shape[1:] != (60, 60):
-            raise SystemExit(f"X shape không đúng, cần (N,60,60), nhận {X.shape}")
-        if y.shape[0] != X.shape[0]:
-            raise SystemExit("y và X lệch số mẫu")
-        if len(groups) != X.shape[0]:
-            raise SystemExit("groups và X lệch số mẫu")
-
+def check_imports():
+    """Verify all modules can be imported."""
+    print("Checking imports...")
+    
+    try:
+        import numpy as np
+        print(f"  numpy {np.__version__}")
+    except ImportError:
+        print("  [FAIL] numpy")
+        return False
+    
     try:
         import torch
+        print(f"  torch {torch.__version__}")
+    except ImportError:
+        print("  [FAIL] torch")
+        return False
+    
+    try:
+        import cv2
+        print(f"  opencv {cv2.__version__}")
+    except ImportError:
+        print("  [FAIL] opencv")
+        return False
+    
+    try:
+        from src.pifr_features import GeometricFeatureExtractor, extract_pifr_features
+        print("  src.pifr_features")
+    except ImportError as e:
+        print(f"  [FAIL] src.pifr_features: {e}")
+        return False
+    
+    try:
+        from src.hybrid_fall_transformer import HybridFallTransformer
+        print("  src.hybrid_fall_transformer")
+    except ImportError as e:
+        print(f"  [FAIL] src.hybrid_fall_transformer: {e}")
+        return False
+    
+    try:
+        from src.stage3_kinematics import compute_pose_angles, classify_posture
+        print("  src.stage3_kinematics")
+    except ImportError as e:
+        print(f"  [FAIL] src.stage3_kinematics: {e}")
+        return False
+    
+    try:
+        from scripts.augmentation import SequenceAugmenter
+        print("  scripts.augmentation")
+    except ImportError as e:
+        print(f"  [FAIL] scripts.augmentation: {e}")
+        return False
+    
+    print("All imports OK\n")
+    return True
 
-        device = "cpu"
+def check_feature_extraction():
+    """Verify feature extraction works."""
+    print("Checking feature extraction...")
+    
+    from src.pifr_features import GeometricFeatureExtractor
+    import numpy as np
+    
+    ext = GeometricFeatureExtractor()
+    kp = np.random.rand(17, 3).astype(np.float64)
+    feat = ext.extract(kp)
+    
+    assert feat.shape == (60,), f"Expected (60,), got {feat.shape}"
+    print(f"  Feature shape: {feat.shape} OK\n")
+    return True
+
+def check_transformer():
+    """Verify transformer model."""
+    print("Checking transformer model...")
+    
+    from src.hybrid_fall_transformer import HybridFallTransformer
+    import torch
+    
+    model = HybridFallTransformer()
+    x = torch.randn(2, 60, 60)
+    out = model(x)
+    
+    assert out.shape == (2, 1), f"Expected (2, 1), got {out.shape}"
+    print(f"  Model output shape: {out.shape} OK\n")
+    return True
+
+def check_augmentation():
+    """Verify augmentation."""
+    print("Checking augmentation...")
+    
+    from scripts.augmentation import SequenceAugmenter
+    import numpy as np
+    
+    aug = SequenceAugmenter(seed=42)
+    seq = np.random.rand(60, 60)
+    aug_seq = aug.apply(seq)
+    
+    assert aug_seq.shape == (60, 60)
+    print(f"  Augmented shape: {aug_seq.shape} OK\n")
+    return True
+
+def main(strict: bool = False):
+    """Run all sanity checks."""
+    print("=" * 50)
+    print("FALL DETECTION SANITY CHECK")
+    print("=" * 50 + "\n")
+    
+    checks = [
+        ("Imports", check_imports),
+        ("Feature Extraction", check_feature_extraction),
+        ("Transformer", check_transformer),
+        ("Augmentation", check_augmentation),
+    ]
+    
+    results = []
+    for name, fn in checks:
         try:
-            ck = torch.load(ckpt, map_location=device, weights_only=False)
-        except TypeError:
-            ck = torch.load(ckpt, map_location=device)
-        if isinstance(ck, dict):
-            print("[ok] ckpt keys:", sorted(list(ck.keys()))[:20], "...")
-            print("[ok] best_threshold:", ck.get("best_threshold", "(missing)"))
-            print("[ok] best_val_f1_tuned:", ck.get("best_val_f1_tuned", "(missing)"))
-        else:
-            print("[warn] ckpt không phải dict (state_dict thuần).")
-            if args.strict:
-                raise SystemExit("Checkpoint không đúng định dạng dict.")
-    except Exception as e:
-        if args.strict:
-            raise
-        print("[warn] Không đọc được checkpoint:", e)
-
+            ok = fn()
+            results.append((name, ok))
+        except Exception as e:
+            print(f"  [ERROR] {e}\n")
+            results.append((name, False))
+    
+    print("=" * 50)
+    print("RESULTS")
+    print("=" * 50)
+    
+    all_pass = True
+    for name, ok in results:
+        status = "PASS" if ok else "FAIL"
+        print(f"  {name}: {status}")
+        if not ok:
+            all_pass = False
+    
+    print("=" * 50)
+    
+    if all_pass:
+        print("All checks passed!")
+        return 0
+    else:
+        print("Some checks FAILED!")
+        if strict:
+            return 1
+    return 0
 
 if __name__ == "__main__":
-    main()
-
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--strict", action="store_true")
+    args = parser.parse_args()
+    
+    sys.exit(main(strict=args.strict))

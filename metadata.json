@@ -1,0 +1,47 @@
+{
+  "created_at_utc": "2026-04-13T10:56:10.494930Z",
+  "paths": {
+    "checkpoint": "/kaggle/working/best_hybrid_transformer.pth",
+    "x_train": "/kaggle/working/data/processed/X_train.npy",
+    "y_train": "/kaggle/working/data/processed/y_train.npy",
+    "groups": "/kaggle/working/data/processed/groups.npy"
+  },
+  "exists": {
+    "best_hybrid_transformer.pth": true,
+    "X_train.npy": true,
+    "y_train.npy": true,
+    "groups.npy": true
+  },
+  "checkpoint_info": {
+    "best_threshold": 0.22999999999999998,
+    "best_val_f1": 0.9387755102040817,
+    "best_val_f1_tuned": 0.9387755102040817,
+    "seq_len": 60,
+    "in_features": 60,
+    "d_model": 256,
+    "keys": [
+      "best_threshold",
+      "best_val_f1",
+      "best_val_f1_tuned",
+      "d_model",
+      "in_features",
+      "model_state_dict",
+      "seq_len"
+    ]
+  },
+  "X_train_shape": [
+    160,
+    60,
+    60
+  ],
+  "X_train_dtype": "float32",
+  "y_train_shape": [
+    160,
+    1
+  ],
+  "y_train_dtype": "float32",
+  "groups_shape": [
+    160
+  ],
+  "groups_dtype": "object"
+}

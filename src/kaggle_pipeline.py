@@ -5,6 +5,10 @@ Kaggle one-command pipeline:
 Mặc định đọc dataset Kaggle Input có cấu trúc:
   <DATASET_ROOT>/URFD/(Fall|fall, ADL|adl)/*.zip
   <DATASET_ROOT>/GMDCSA24/Subject */(Fall|fall, ADL|adl)/*.mp4
+  <DATASET_ROOT>/LE2I/(Fall|fall, ADL|adl)/*.avi/*.mp4
+
+LE2I Zone-based Protocol (--include-le2i):
+  <DATASET_ROOT>/LE2I/LE2I_Fall_Annotation.csv (tùy chọn, chứa start_fall/end_fall)
 
 Biến môi trường:
   - FALL_DATASET_ROOT: ví dụ /kaggle/input/fall-detection-dataset
@@ -44,6 +48,23 @@ def main() -> None:
     ap.add_argument("--work-root", type=Path, default=None)
     ap.add_argument("--strict", action="store_true", help="Fail fast nếu thiếu dữ liệu/đầu ra.")
     ap.add_argument("--pose-weights", type=str, default="yolo11n-pose.pt")
+    ap.add_argument(
+        "--include-le2i",
+        action="store_true",
+        help="Cũng xử lý LE2I dataset với Zone-based Protocol (cần annotation CSV).",
+    )
+    ap.add_argument(
+        "--le2i-stride",
+        type=int,
+        default=15,
+        help="Sliding window stride cho LE2I Zone-based Protocol (mặc định: 15).",
+    )
+    ap.add_argument(
+        "--le2i-val-subjects",
+        type=float,
+        default=0.2,
+        help="Tỷ lệ subject cho validation LE2I (mặc định: 0.2).",
+    )
     args = ap.parse_args()
 
     dataset_root = args.dataset_root or _env_path("FALL_DATASET_ROOT", "/kaggle/input/fall-detection-dataset")
@@ -51,15 +72,18 @@ def main() -> None:
 
     urfd_root = dataset_root / "URFD"
     gmdcsa_root = dataset_root / "GMDCSA24"
+    le2i_root = dataset_root / "LE2I"
 
     aio_root = work_root / "AIO_Dataset"
     processed = work_root / "data" / "processed"
+    le2i_processed = work_root / "data" / "le2i_processed"
     out_ckpt = work_root / "best_hybrid_transformer.pth"
 
     print("[cfg] dataset_root =", dataset_root)
     print("[cfg] work_root    =", work_root)
     print("[cfg] URFD_ROOT    =", urfd_root)
     print("[cfg] GMDCSA_ROOT  =", gmdcsa_root)
+    print("[cfg] LE2I_ROOT    =", le2i_root, f"({'enabled' if args.include_le2i else 'disabled'})")
 
     if args.strict and (not urfd_root.is_dir()) and (not gmdcsa_root.is_dir()):
         raise SystemExit(f"Không thấy URFD hoặc GMDCSA24 dưới {dataset_root}.")
@@ -123,6 +147,58 @@ def main() -> None:
     t_extract_1 = time.perf_counter()
     print(f"[time] data_extractor : {t_extract_1 - t_extract_0:.1f}s")
 
+    # ── LE2I Zone-based Processing (optional) ─────────────────────────────────
+    if args.include_le2i and le2i_root.is_dir():
+        print("\n[INFO] Processing LE2I dataset with Zone-based Protocol...")
+        le2i_annotation_csv = le2i_root / "LE2I_Fall_Annotation.csv"
+        le2i_annotation_json = aio_root / "_le2i_annotations.json"
+
+        # Step 2a: Prepare LE2I clips into AIO_Dataset
+        t_le2i_prep = time.perf_counter()
+        _run(
+            [
+                sys.executable,
+                "prepare_le2i_dataset.py",
+                "--le2i-root",
+                str(le2i_root),
+                "--out",
+                str(aio_root),
+                "--annotation-csv" if le2i_annotation_csv.is_file() else "",
+                str(le2i_annotation_csv) if le2i_annotation_csv.is_file() else "",
+            ],
+            strict=False,  # LE2I optional
+        )
+        print(f"[time] prepare_le2i   : {time.perf_counter() - t_le2i_prep:.1f}s")
+
+        # Step 2b: Zone-based extraction
+        t_le2i_ext = time.perf_counter()
+        _run(
+            [
+                sys.executable,
+                "le2i_zone_based_extractor.py",
+                "--aio-dir",
+                str(aio_root),
+                "--annotation-json",
+                str(le2i_annotation_json) if le2i_annotation_json.is_file() else "",
+                "--out-dir",
+                str(le2i_processed),
+                "--val-subjects",
+                str(args.le2i_val_subjects),
+                "--stride",
+                str(args.le2i_stride),
+                "--device",
+                "cpu",
+            ],
+            strict=False,
+        )
+        print(f"[time] le2i_zone_extract: {time.perf_counter() - t_le2i_ext:.1f}s")
+
+        # Print LE2I stats
+        le2i_x = le2i_processed / "X_train.npy"
+        if le2i_x.is_file():
+            X_l = np.load(le2i_x)
+            print(f"[data-le2i] shape={tuple(X_l.shape)}")
+
     # Print quick dataset stats
     x_path = processed / "X_train.npy"
     y_path = processed / "y_train.npy"
@@ -137,7 +213,7 @@ def main() -> None:
         if g_path.is_file():
             groups = np.load(g_path, allow_pickle=True)
             try:
-                uniq = int(len(set(str(x) for x in groups.tolist())))
+                uniq = int(len({str(x) for x in groups.tolist()}))
                 print(f"[data] groups: {len(groups)} (unique={uniq})")
             except Exception:
                 print(f"[data] groups: {len(groups)} (unique=n/a)")

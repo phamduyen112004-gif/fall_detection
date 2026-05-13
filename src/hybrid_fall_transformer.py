@@ -74,3 +74,18 @@ class HybridFallTransformer(nn.Module):
         h = self.encoder(h)
         pooled = h.mean(dim=1)
         return self.head(pooled)
+
+    def predict(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Inference convenience method that returns probability scores.
+
+        Args:
+            x: Input tensor of shape (B, seq_len, feature_dim), typically (B, 60, 60).
+
+        Returns:
+            Probability scores in [0, 1] after sigmoid activation.
+        """
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)
+            return torch.sigmoid(logits)

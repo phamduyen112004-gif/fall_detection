@@ -149,3 +149,52 @@ class FallTemporalFilter:
     def acknowledge_fall(self) -> None:
         """Giữ trạng thái đã báo; reset khi bệnh nhân trở lại tư thế bình thường (trong update)."""
         self.state.reset_laydown()
+
+
+class KinematicsAnalyzer:
+    """
+    Wrapper class that combines pose angle computation and posture classification.
+
+    Provides a unified interface for kinematic analysis of pose keypoints.
+    """
+
+    def __init__(self, cfg: PipelineConfig | None = None) -> None:
+        """
+        Initialize KinematicsAnalyzer.
+
+        Args:
+            cfg: Pipeline configuration with angle thresholds.
+        """
+        self.cfg = cfg or PipelineConfig()
+        self.fall_filter = FallTemporalFilter(self.cfg)
+
+    def analyze(self, keypoints: np.ndarray) -> tuple[Posture, float | None, float | None]:
+        """
+        Analyze pose keypoints and return posture classification.
+
+        Args:
+            keypoints: Array of shape (17, 3) with [x, y, conf].
+
+        Returns:
+            Tuple of (posture, torso_deg, nose_ankle_deg).
+        """
+        torso_deg, nose_ankle_deg = compute_pose_angles(keypoints)
+        posture = classify_posture(torso_deg, nose_ankle_deg, self.cfg)
+        return posture, torso_deg, nose_ankle_deg
+
+    def is_fall(self, keypoints: np.ndarray) -> bool:
+        """
+        Check if pose indicates a fall (with temporal filtering).
+
+        Args:
+            keypoints: Array of shape (17, 3) with [x, y, conf].
+
+        Returns:
+            True if fall is confirmed by temporal filter.
+        """
+        posture, _, _ = self.analyze(keypoints)
+        return self.fall_filter.update(posture)
+
+    def reset(self) -> None:
+        """Reset temporal filter state."""
+        self.fall_filter.acknowledge_fall()

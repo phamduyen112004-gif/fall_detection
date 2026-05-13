@@ -1,6 +1,6 @@
 # Hybrid YOLOv11-Pose + Transformer — Kaggle Notebook (cách chạy đơn giản)
 
-Nếu bạn muốn chạy “gọn” như bạn đề xuất (clone repo + 1 lệnh), hãy dùng **6 cell** dưới đây.
+Nếu bạn muốn chạy "gọn" như bạn đề xuất (clone repo + 1 lệnh), hãy dùng **5 cell** dưới đây.
 
 Yêu cầu: bật Internet (để clone repo và cài thư viện), và đã add dataset trong tab **Input**.
 
@@ -63,20 +63,23 @@ print("FALL_WORK_ROOT    =", os.environ.get("FALL_WORK_ROOT", "(default: /kaggle
 
 ---
 
-## CELL 6 (tuỳ chọn): Optional ablation study (rule-based)
-
-```python
-%cd "/kaggle/working/{REPO}"
-!python -m src.eval.ablation_runner --help
-```
-
----
-
 ## Ghi chú
 
 1. **CELL 1:** Bật **Internet** để `git clone` chạy được.
-2. **CELL 2:** Nếu `pip install -r requirements.txt` lỗi do môi trường Kaggle, thử “Restart session” rồi chạy lại CELL 2.
+2. **CELL 2:** Nếu `pip install -r requirements.txt` lỗi do môi trường Kaggle, thử "Restart session" rồi chạy lại CELL 2.
 3. **CELL 3:** Nếu dataset Input của bạn không phải `/kaggle/input/fall-detection-dataset`, hãy set `FALL_DATASET_ROOT` đúng tên. Cấu trúc mong đợi:
    - `FALL_DATASET_ROOT/URFD/(Fall|fall, ADL|adl)/*.zip`
    - `FALL_DATASET_ROOT/GMDCSA24/Subject */(Fall|fall, ADL|adl)/*.mp4`
+   - `FALL_DATASET_ROOT/LE2I/(Fall|fall, ADL|adl)/*.avi/*.mp4`
+   - `FALL_DATASET_ROOT/LE2I/LE2I_Fall_Annotation.csv` (tuỳ chọn, cho Zone-based Protocol)
 4. **CELL 4:** Khuyến nghị bật **GPU** để trích đặc trưng và train nhanh hơn. Trong log của CELL 4 sẽ có thống kê nhanh: `N`, `fall/nofall`, `X_shape` và `groups unique`. Checkpoint xuất ra: `/kaggle/working/best_hybrid_transformer.pth`.
+5. **LE2I Zone-based Protocol:** Để bật xử lý LE2I với Zone-based Protocol:
+   ```bash
+   !python scripts/prepare_le2i_dataset.py --source /kaggle/input/le2i
+   ```
+   Sau đó chạy:
+   ```bash
+   !python data_extractor.py --dataset AIO_Dataset/le2i --output-dir extracted_le2i
+   ```
+6. **Checkpoint saved:** `/kaggle/working/best_hybrid_transformer.pth`
+7. **Model ready for inference:** Sử dụng `app_inference.py` hoặc `gui_app.py` để test.
