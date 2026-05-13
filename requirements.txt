@@ -9,7 +9,6 @@ torch>=2.0.0
 PyQt5>=5.15.0
 
 # Workspace Cleanup
-import os
 import shutil
 
 # Directories and files to clean up

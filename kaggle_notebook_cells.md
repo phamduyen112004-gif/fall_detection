@@ -35,12 +35,16 @@ print("Cloned:", REPO)
 ```python
 import os
 
-# Dataset name theo ảnh bạn gửi:
-# os.environ["FALL_DATASET_ROOT"] = "/kaggle/input/fall-detection-dataset"
-# os.environ["FALL_WORK_ROOT"] = "/kaggle/working"
+# Dataset paths for GMDCSA and URFD
+os.environ["FALL_DATASET_ROOT"] = "/kaggle/input/fall-detection-dataset"
+os.environ["FALL_WORK_ROOT"] = "/kaggle/working"
+
+# LE2I dataset path
+os.environ["LE2I_DATASET_ROOT"] = "/kaggle/input/le2i-dataset"
 
 print("FALL_DATASET_ROOT =", os.environ.get("FALL_DATASET_ROOT", "(default in src.kaggle_pipeline)"))
 print("FALL_WORK_ROOT    =", os.environ.get("FALL_WORK_ROOT", "(default: /kaggle/working)"))
+print("LE2I_DATASET_ROOT =", os.environ.get("LE2I_DATASET_ROOT", "(default: not set)"))
 ```
 
 ---
