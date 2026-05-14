@@ -76,11 +76,10 @@ NUM_KEYPOINTS = 17
 
 # SOTA Models placeholder (for thesis comparison table)
 SOTA_MODELS = [
-    {"Model": "Kurniadi et al. (2026)", "Dataset": "LE2I", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
     {"Model": "Benabdennour et al. (2026)", "Dataset": "URFD", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
-    {"Model": "Khawam et al. (2025)", "Dataset": "AIO", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
-    {"Model": "Xu et al. (2024)", "Dataset": "Multiple", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
-    {"Model": "Han et al. (2023)", "Dataset": "Multiple", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
+    {"Model": "Khawam et al. (2025)", "Dataset": "URFD", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
+    {"Model": "Xu et al. (2024)", "Dataset": "URFD", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
+    {"Model": "Han et al. (2023)", "Dataset": "URFD", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
     {"Model": "Liu et al. (2022)", "Dataset": "URFD", "Accuracy": "", "Precision": "", "Recall": "", "F1-Score": "", "mAP@0.5": "", "FPS": ""},
 ]
 

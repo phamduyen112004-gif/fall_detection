@@ -132,7 +132,6 @@ fall-detection/
 ├── train_transformer.py        # Training script
 ├── prepare_dataset.py          # Dataset preparation
 ├── data_extractor.py          # Feature extraction
-├── le2i_zone_based_extractor.py  # Zone-based LE2I extraction
 ├── evaluate.py                # Comprehensive evaluation
 ├── benchmark_fps.py           # FPS benchmark on videos
 ├── final_evaluation.py        # Full eval + SOTA comparison + LaTeX table
@@ -185,14 +184,13 @@ python app_inference.py
 
 ## Chuẩn bị dữ liệu
 
-### AIO Dataset (URFD + GMDCSA-24)
+### AIO Dataset (URFD + GMDSA24)
 
 ```bash
-# Bước 1: Gộp tất cả 3 dataset (URFD + GMDCSA-24 + LE2I)
+# Bước 1: Gộp tất cả 2 dataset (URFD + GMDSA24)
 python prepare_dataset.py \
     --urfd-root data/raw/URFD \
-    --gmdcsa-root data/raw/GMDCSA24 \
-    --le2i-root data/raw/LE2I \
+    --gmdcsa-root data/raw/GMDSA24 \
     --out AIO_Dataset
 
 # Bước 2: Trích đặc trưng
@@ -200,27 +198,6 @@ python data_extractor.py \
     --aio-dir AIO_Dataset \
     --out-dir data/processed
 ```
-
-### LE2I Dataset (Zone-based Protocol)
-
-LE2I được gộp chung ở Bước 1 (`prepare_dataset.py`). Annotation JSON sẽ được tạo tự động tại `AIO_Dataset/_le2i_annotations.json`.
-
-```bash
-# Trích đặc trưng với Zone-based Protocol
-python le2i_zone_based_extractor.py \
-    --aio-dir AIO_Dataset \
-    --annotation-json AIO_Dataset/_le2i_annotations.json \
-    --out-dir data/le2i_processed \
-    --val-subjects 0.2 \
-    --stride 15
-```
-
-**Zone-based Protocol:**
-| Class | Label | Rule |
-|-------|-------|------|
-| Fall | 0 | Window bao trùm `[start_fall, end_fall]` |
-| Non-Fall (ADL) | 1 | Window kết thúc ≥30 frames trước `start_fall` |
-| Discarded | - | Buffer zone, post-fall zone |
 
 ---
 

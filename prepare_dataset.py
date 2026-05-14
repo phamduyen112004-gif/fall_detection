@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24 + LE2I.
+Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24.
 
-Gộp tất cả dataset vào một thư mục AIO_Dataset/{fall,nofall}/:
+Gộp dataset vào một thư mục AIO_Dataset/{fall,nofall}/:
   - URFD: extract zip hoặc copy clip folders
   - GMDCSA-24: copy video từ Subject */Fall|fall, ADL|adl
 
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import re
 import shutil
 import sys
@@ -34,7 +33,6 @@ VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv")
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 URFD_FALL_ZIP_DIRS = ("fall", "Fall", "FALL")
 URFD_ADL_ZIP_DIRS = ("adl", "ADL", "Adl")
-LE2I_VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v")
 
 
 def _safe_stem(name: str) -> str:
@@ -269,248 +267,6 @@ def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> int:
 
 
 # =============================================================================
-# LE2I Functions
-# =============================================================================
-
-def _normalize_video_name(name: str) -> str:
-    name = name.strip()
-    for ext in LE2I_VIDEO_EXTENSIONS:
-        if name.lower().endswith(ext.lower()):
-            name = name[: -len(ext)]
-    return name.strip()
-
-
-def _is_annotation_file(path: Path) -> bool:
-    """Annotation files are .txt or .xml at any level in LE2I dataset."""
-    ext = path.suffix.lower()
-    if ext not in (".txt", ".xml", ".csv"):
-        return False
-    # Annotation files are typically small text files with frame numbers
-    try:
-        size = path.stat().st_size
-        if size > 500_000:  # skip large files
-            return False
-    except OSError:
-        return False
-    return True
-
-
-def _parse_le2i_annotation(ann_file: Path) -> tuple[int, int, list]:
-    """Parse LE2I annotation file. Returns (start_fall, end_fall, frame_data)."""
-    start_fall = -1
-    end_fall = -1
-    frame_data: list = []
-
-    if not ann_file.is_file():
-        return -1, -1, []
-
-    try:
-        lines = ann_file.read_text(encoding="utf-8", errors="replace").strip().split("\n")
-    except Exception:
-        return -1, -1, []
-
-    if len(lines) < 3:
-        return -1, -1, []
-
-    try:
-        start_fall = int(lines[0].strip())
-        end_fall = int(lines[1].strip())
-    except ValueError:
-        pass
-
-    for line in lines[2:]:
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(",")
-        if len(parts) < 2:
-            continue
-        try:
-            frame_idx = int(parts[0].strip())
-            label = int(parts[1].strip())
-            bbox = [int(p.strip()) for p in parts[2:6]] if len(parts) >= 6 else []
-            frame_data.append((frame_idx, label, bbox))
-        except ValueError:
-            continue
-
-    if start_fall < 0 or end_fall < 0:
-        fall_frames = [f for f, l, _ in frame_data if l in (7, 8)]
-        if fall_frames:
-            start_fall = min(fall_frames)
-            end_fall = max(fall_frames)
-        else:
-            start_fall, end_fall = -1, -1
-
-    return start_fall, end_fall, frame_data
-
-
-def _find_le2i_scenes_and_videos(root: Path) -> tuple[list, dict]:
-    """Find all LE2I scenes, videos and annotations."""
-    results: list = []
-    annotations_info: dict[str, tuple[int, int]] = {}
-
-    # Build annotation lookup: file stem -> annotation file path
-    ann_lookup: dict[str, Path] = {}
-    for af in root.rglob("*"):
-        if af.is_file() and _is_annotation_file(af):
-            ann_lookup[_normalize_video_name(af.stem)] = af
-
-    # Scan all directories up to 2 levels deep for videos
-    for scene_parent in root.iterdir():
-        if not scene_parent.is_dir():
-            continue
-
-        # Try: Home_01/video.avi OR Home_01/Video/video.avi
-        for f in scene_parent.rglob("*"):
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in LE2I_VIDEO_EXTENSIONS:
-                continue
-
-            norm_name = _normalize_video_name(f.stem)
-            ann_file = ann_lookup.get(norm_name)
-            if ann_file:
-                del ann_lookup[norm_name]  # consume to avoid re-use
-
-            results.append((scene_parent, f, ann_file))
-            if ann_file:
-                start, end, _ = _parse_le2i_annotation(ann_file)
-                annotations_info[norm_name] = (start, end)
-
-    return results, annotations_info
-
-
-def _classify_video(start_fall: int, end_fall: int) -> int:
-    """Classify video: 1=fall, 0=nofall"""
-    if start_fall > 0 and end_fall > 0 and end_fall > start_fall:
-        return 1
-    return 0
-
-
-def extract_le2i_clips(
-    le2i_root: Path,
-    aio_root: Path,
-) -> tuple[int, dict[str, Any]]:
-    """Extract LE2I dataset into AIO_Dataset/{fall,nofall}/."""
-    (aio_root / "fall").mkdir(parents=True, exist_ok=True)
-    (aio_root / "nofall").mkdir(parents=True, exist_ok=True)
-
-    video_mapping: dict[str, dict[str, Any]] = {}
-    total_copied = 0
-
-    print(f"[LE2I] Scanning: {le2i_root}")
-
-    items, _ = _find_le2i_scenes_and_videos(le2i_root)
-
-    if not items:
-        print("[LE2I] No videos found!")
-        return 0, {}
-
-    print(f"[LE2I] Found {len(items)} videos")
-
-    scenes: dict[str, list] = {}
-    for scene_path, video_path, ann_file in items:
-        scene_name = _safe_stem(scene_path.name).lower()
-        if scene_name not in scenes:
-            scenes[scene_name] = []
-        scenes[scene_name].append((scene_path, video_path, ann_file))
-
-    for scene_name, scene_items in sorted(scenes.items()):
-        print(f"\n[LE2I] Scene: {scene_name} ({len(scene_items)} videos)")
-
-        for scene_path, video_path, ann_file in scene_items:
-            norm_name = _normalize_video_name(video_path.name)
-
-            start_fall, end_fall = -1, -1
-            frame_data: list = []
-            if ann_file:
-                start_fall, end_fall, frame_data = _parse_le2i_annotation(ann_file)
-
-            label = _classify_video(start_fall, end_fall)
-
-            label_tag = "fall" if label == 1 else "nofall"
-            stem = _safe_stem(video_path.stem)
-            ext = video_path.suffix.lower()
-            if ext not in LE2I_VIDEO_EXTENSIONS:
-                ext = ".avi"
-            new_name = f"le2i_{scene_name}_{label_tag}_{stem}{ext}"
-
-            dest_dir = aio_root / ("fall" if label == 1 else "nofall")
-            dest_path = dest_dir / new_name
-
-            if dest_path.exists():
-                status = "FALL" if label == 1 else "ADL "
-                print(f"  [SKIP] {new_name} (already exists)")
-                video_mapping[new_name.lower()] = {
-                    "path": str(dest_path),
-                    "label": label,
-                    "source": str(video_path),
-                    "slug": f"le2i_{scene_name}",
-                    "scene": scene_name,
-                    "start_fall": start_fall,
-                    "end_fall": end_fall,
-                    "total_frames": len(frame_data),
-                }
-                total_copied += 1
-                continue
-
-            try:
-                # Try hardlink first (no extra disk space on same filesystem)
-                try:
-                    import os as _os
-                    _os.link(video_path, dest_path)
-                    status = "FALL" if label == 1 else "ADL "
-                    if start_fall > 0 and end_fall > 0:
-                        print(f"  [{status}] {video_path.name} -> {new_name} [hardlink]")
-                        print(f"           Fall frames: {start_fall} - {end_fall}")
-                    else:
-                        print(f"  [{status}] {video_path.name} -> {new_name} [hardlink] (no annotation)")
-                except OSError:
-                    # Fallback to copy
-                    shutil.copy2(video_path, dest_path)
-                    status = "FALL" if label == 1 else "ADL "
-                    if start_fall > 0 and end_fall > 0:
-                        print(f"  [{status}] {video_path.name} -> {new_name}")
-                        print(f"           Fall frames: {start_fall} - {end_fall}")
-                    else:
-                        print(f"  [{status}] {video_path.name} -> {new_name} (no annotation)")
-            except Exception as e:
-                print(f"  [ERROR] Failed to copy {video_path.name}: {e}")
-                continue
-
-            video_mapping[new_name.lower()] = {
-                "path": str(dest_path),
-                "label": label,
-                "source": str(video_path),
-                "slug": f"le2i_{scene_name}",
-                "scene": scene_name,
-                "start_fall": start_fall,
-                "end_fall": end_fall,
-                "total_frames": len(frame_data),
-            }
-
-            total_copied += 1
-
-    # Save metadata
-    meta_path = aio_root / "_le2i_annotations.json"
-    with meta_path.open("w", encoding="utf-8") as f:
-        json.dump(video_mapping, f, indent=2, ensure_ascii=False)
-
-    fall_count = sum(1 for v in video_mapping.values() if v["label"] == 1)
-    nofall_count = sum(1 for v in video_mapping.values() if v["label"] == 0)
-    with_ann = sum(1 for v in video_mapping.values() if v["start_fall"] >= 0)
-
-    print(f"\n[LE2I] === Summary ===")
-    print(f"  Total videos: {total_copied}")
-    print(f"  Fall videos:   {fall_count}")
-    print(f"  ADL videos:    {nofall_count}")
-    print(f"  With annotation: {with_ann}")
-    print(f"  Metadata saved: {meta_path}")
-
-    return total_copied, video_mapping
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
@@ -523,23 +279,18 @@ def main() -> None:
             pass
 
     ap = argparse.ArgumentParser(
-        description="Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24 + LE2I",
+        description="Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Datasets:
   URFD: University of Rome Fall Dataset (zip clips hoặc extracted folders)
   GMDCSA-24: GMDCSA24 Dataset (video files)
-  LE2I: LE2I Fall Detection Dataset (video + annotation files)
 
 Ví dụ:
   python prepare_dataset.py \\
       --urfd-root data/raw/URFD \\
       --gmdcsa-root data/raw/GMDCSA24 \\
-      --le2i-root data/raw/LE2I \\
       --out AIO_Dataset
-
-  # URFD và GMDCSA (không có LE2I):
-  python prepare_dataset.py --urfd-root URFD --gmdcsa-root GMDCSA --out AIO_Dataset
         """,
     )
     ap.add_argument(
@@ -553,12 +304,6 @@ Ví dụ:
         type=Path,
         default=None,
         help="Thư mục cha GMDCSA-24 (chứa Subject */Fall|ADL)",
-    )
-    ap.add_argument(
-        "--le2i-root",
-        type=Path,
-        default=None,
-        help="Thư mục gốc LE2I dataset",
     )
     ap.add_argument(
         "--out",
@@ -596,23 +341,15 @@ Ví dụ:
         else:
             print(f"[warn] GMDCSA root not found: {args.gmdcsa_root}")
 
-    n_le2i = 0
-    if args.le2i_root:
-        if args.le2i_root.is_dir():
-            n_le2i, _ = extract_le2i_clips(args.le2i_root, aio)
-        else:
-            print(f"[warn] LE2I root not found: {args.le2i_root}")
-
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
     print(f"  URFD clips:  {n_urfd}")
     print(f"  GMDCSA videos: {n_gmdcsa}")
-    print(f"  LE2I videos:   {n_le2i}")
     print(f"  Output: {aio}")
 
-    if args.strict and (n_urfd + n_gmdcsa + n_le2i) == 0:
-        raise SystemExit("No clips prepared (GMDCSA+LE2I empty).")
+    if args.strict and (n_urfd + n_gmdcsa) == 0:
+        raise SystemExit("No clips prepared (URFD+GMDCSA empty).")
 
 
 if __name__ == "__main__":

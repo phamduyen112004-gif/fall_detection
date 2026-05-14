@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Trích đặc trưng từ AIO_Dataset (thư mục ảnh URFD hoặc video GMDCSA) -> X_train.npy, y_train.npy.
+Trích đặc trưng từ AIO_Dataset (URFD image folders hoặc GMDSA24 videos) -> X_train.npy, y_train.npy.
 
   python data_extractor.py --aio-dir AIO_Dataset --out-dir data/processed
 

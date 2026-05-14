@@ -8,18 +8,13 @@ from pathlib import Path
 
 def group_id_from_clip_path(path: Path) -> str:
     """
-    - GMDCSA: gmdcsa_subject3_*.mp4 -> 'gmdcsa_subject3' (cùng subject = cùng nhóm).
-    - LE2I: le2i_subject3_*.mp4/avi -> 'le2i_subject3' (cùng subject = cùng nhóm).
+    - GMDSA24: gmdcsa_subject3_*.mp4 -> 'gmdcsa_subject3' (cùng subject = cùng nhóm).
     - URFD: thư mục urfd_fall_* / urfd_adl_* -> tên thư mục (mỗi clip một nhóm).
     - Khác: đường dẫn tuyệt đối (mỗi clip một nhóm).
     """
     name = path.name
 
     m = re.match(r"(gmdcsa_subject\d+)_", name, re.I)
-    if m:
-        return m.group(1).lower()
-
-    m = re.match(r"(le2i_subject\d+)_", name, re.I)
     if m:
         return m.group(1).lower()
 

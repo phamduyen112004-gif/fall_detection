@@ -78,7 +78,6 @@ SOTA_DATA = [
     ("Kaur et al.",               "URFD", 0.973, 0.969, 15.0, 2024, "Multi-scale CNN"),
     ("Le et al.",                 "URFD", 0.965, 0.960, 22.0, 2023, "Pose-based LSTM"),
     ("Romero, D.",                "URFD", 0.960, 0.955, 10.0, 2022, "Keypoint-based"),
-    ("Kurniadi et al.",           "LE2I", 0.958, 0.952, 22.0, 2026, "Zone-based YOLO"),
     ("Benabdennour et al.",       "URFD", 0.961, 0.956, 28.0, 2026, "Lightweight Transformer"),
     ("MSSNet (Wang et al.)",      "URFD", 0.971, 0.967, 19.0, 2024, "Multi-stream"),
     ("Shi et al.",                "URFD", 0.974, 0.970, 16.0, 2024, "Pose-guided"),
