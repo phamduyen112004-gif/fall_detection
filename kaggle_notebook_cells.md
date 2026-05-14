@@ -172,6 +172,88 @@ python final_evaluation.py \
 
 ---
 
+## Cell 9: Nén toàn bộ kết quả (chạy SAU Cell 8)
+
+```python
+import os
+import zipfile
+import shutil
+from pathlib import Path
+
+WORK_DIR = "/kaggle/working/fall_detection"
+
+# Các thư mục cần nén
+ARTIFACTS = [
+    ("AIO_Dataset",            "AIO_Dataset.zip"),
+    ("data/processed",          "data_processed.zip"),
+    ("data/le2i_processed",     "data_le2i_processed.zip"),
+    ("data/merged",             "data_merged.zip"),
+    ("best_hybrid_transformer.pth",  "best_hybrid_transformer.pth.zip"),
+    ("final_results",           "final_results.zip"),
+]
+
+ZIP_NAME = "fall_detection_results.zip"
+zip_path = os.path.join(WORK_DIR, ZIP_NAME)
+
+print(f"[COMPRESS] Creating {ZIP_NAME} ...")
+
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for src_name, arc_name in ARTIFACTS:
+        src_path = os.path.join(WORK_DIR, src_name)
+        if os.path.exists(src_path):
+            if os.path.isdir(src_path):
+                for root, dirs, files in os.walk(src_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, WORK_DIR)
+                        zf.write(file_path, rel_path)
+                        print(f"  + {rel_path}")
+            else:
+                zf.write(src_path, arc_name)
+                print(f"  + {arc_name}")
+        else:
+            print(f"  [skip] {src_name} (not found)")
+
+zip_size = os.path.getsize(zip_path) / (1024 * 1024)
+print(f"\n[OK] {ZIP_NAME} created: {zip_size:.1f} MB")
+
+# Liệt kê nội dung
+print("\n--- Contents ---")
+with zipfile.ZipFile(zip_path, "r") as zf:
+    for info in sorted(zf.infolist(), key=lambda x: x.filename):
+        print(f"  {info.filename:60s}  {info.file_size/1024:.0f} KB")
+```
+
+---
+
+## Cell A: Tải kết quả đã nén (chạy THAY Cell 2-8 nếu có sẵn)
+
+```python
+import os
+import zipfile
+import urllib.request
+
+WORK_DIR = "/kaggle/working/fall_detection"
+ZIP_NAME = "fall_detection_results.zip"
+zip_path = os.path.join(WORK_DIR, ZIP_NAME)
+
+# ==== THAY URL NÀY bằng link Google Drive / GitHub LFS / your server ====
+RESULT_URL = "YOUR_COMPRESSED_RESULTS_URL.zip"
+# =======================================================================
+
+if os.path.exists(zip_path):
+    print(f"[FOUND] {ZIP_NAME} locally — skipping all steps!")
+else:
+    print(f"[DOWNLOAD] Downloading from {RESULT_URL} ...")
+    urllib.request.urlretrieve(RESULT_URL, zip_path)
+    print(f"[OK] Downloaded: {os.path.getsize(zip_path)/1024/1024:.1f} MB")
+
+print(f"\n[EXTRACT] Extracting {ZIP_NAME} ...")
+with zipfile.ZipFile(zip_path, "r") as zf:
+    zf.extractall(WORK_DIR)
+print("[OK] All artifacts extracted!")
+```
+
 ## Lưu ý
 
 ### Dataset paths chính xác

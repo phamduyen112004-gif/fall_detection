@@ -282,6 +282,21 @@ def _normalize_video_name(name: str) -> str:
     return name.strip()
 
 
+def _is_annotation_file(path: Path) -> bool:
+    """Annotation files are .txt or .xml at any level in LE2I dataset."""
+    ext = path.suffix.lower()
+    if ext not in (".txt", ".xml", ".csv"):
+        return False
+    # Annotation files are typically small text files with frame numbers
+    try:
+        size = path.stat().st_size
+        if size > 500_000:  # skip large files
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def _parse_le2i_annotation(ann_file: Path) -> tuple[int, int, list]:
     """Parse LE2I annotation file. Returns (start_fall, end_fall, frame_data)."""
     start_fall = -1
@@ -336,64 +351,33 @@ def _find_le2i_scenes_and_videos(root: Path) -> tuple[list, dict]:
     results: list = []
     annotations_info: dict[str, tuple[int, int]] = {}
 
+    # Build annotation lookup: file stem -> annotation file path
+    ann_lookup: dict[str, Path] = {}
+    for af in root.rglob("*"):
+        if af.is_file() and _is_annotation_file(af):
+            ann_lookup[_normalize_video_name(af.stem)] = af
+
+    # Scan all directories up to 2 levels deep for videos
     for scene_parent in root.iterdir():
         if not scene_parent.is_dir():
             continue
 
-        videos_dir = None
-        ann_dir = None
-
-        for child in scene_parent.iterdir():
-            if not child.is_dir():
+        # Try: Home_01/video.avi OR Home_01/Video/video.avi
+        for f in scene_parent.rglob("*"):
+            if not f.is_file():
                 continue
-            child_name = child.name.lower()
-            if "video" in child_name:
-                videos_dir = child
-            elif "annotation" in child_name:
-                ann_dir = child
+            if f.suffix.lower() not in LE2I_VIDEO_EXTENSIONS:
+                continue
 
-        if videos_dir is None:
-            for child in scene_parent.iterdir():
-                if child.is_dir() and "video" in child.name.lower():
-                    videos_dir = child
-                    break
+            norm_name = _normalize_video_name(f.stem)
+            ann_file = ann_lookup.get(norm_name)
+            if ann_file:
+                del ann_lookup[norm_name]  # consume to avoid re-use
 
-        if ann_dir is None:
-            for child in scene_parent.iterdir():
-                if child.is_dir() and "annotation" in child.name.lower():
-                    ann_dir = child
-                    break
-
-        if videos_dir is None:
-            for f in scene_parent.iterdir():
-                if f.is_file() and f.suffix.lower() in LE2I_VIDEO_EXTENSIONS:
-                    videos_dir = scene_parent
-                    break
-
-        if videos_dir is None:
-            continue
-
-        if videos_dir.is_dir():
-            for f in videos_dir.iterdir():
-                if not f.is_file() or f.suffix.lower() not in LE2I_VIDEO_EXTENSIONS:
-                    continue
-
-                norm_name = _normalize_video_name(f.name)
-
-                ann_file = None
-                if ann_dir and ann_dir.is_dir():
-                    for af in ann_dir.iterdir():
-                        if af.is_file():
-                            ann_norm = _normalize_video_name(af.name)
-                            if ann_norm == norm_name:
-                                ann_file = af
-                                break
-
-                results.append((scene_parent, f, ann_file))
-
-                if ann_file:
-                    start, end, _ = _parse_le2i_annotation(ann_file)
-                    annotations_info[norm_name] = (start, end)
+            results.append((scene_parent, f, ann_file))
+            if ann_file:
+                start, end, _ = _parse_le2i_annotation(ann_file)
+                annotations_info[norm_name] = (start, end)
 
     return results, annotations_info
 
