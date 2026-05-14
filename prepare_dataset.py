@@ -440,14 +440,42 @@ def extract_le2i_clips(
             dest_dir = aio_root / ("fall" if label == 1 else "nofall")
             dest_path = dest_dir / new_name
 
-            try:
-                shutil.copy2(video_path, dest_path)
+            if dest_path.exists():
                 status = "FALL" if label == 1 else "ADL "
-                if start_fall > 0 and end_fall > 0:
-                    print(f"  [{status}] {video_path.name} -> {new_name}")
-                    print(f"           Fall frames: {start_fall} - {end_fall}")
-                else:
-                    print(f"  [{status}] {video_path.name} -> {new_name} (no annotation)")
+                print(f"  [SKIP] {new_name} (already exists)")
+                video_mapping[new_name.lower()] = {
+                    "path": str(dest_path),
+                    "label": label,
+                    "source": str(video_path),
+                    "slug": f"le2i_{scene_name}",
+                    "scene": scene_name,
+                    "start_fall": start_fall,
+                    "end_fall": end_fall,
+                    "total_frames": len(frame_data),
+                }
+                total_copied += 1
+                continue
+
+            try:
+                # Try hardlink first (no extra disk space on same filesystem)
+                try:
+                    import os as _os
+                    _os.link(video_path, dest_path)
+                    status = "FALL" if label == 1 else "ADL "
+                    if start_fall > 0 and end_fall > 0:
+                        print(f"  [{status}] {video_path.name} -> {new_name} [hardlink]")
+                        print(f"           Fall frames: {start_fall} - {end_fall}")
+                    else:
+                        print(f"  [{status}] {video_path.name} -> {new_name} [hardlink] (no annotation)")
+                except OSError:
+                    # Fallback to copy
+                    shutil.copy2(video_path, dest_path)
+                    status = "FALL" if label == 1 else "ADL "
+                    if start_fall > 0 and end_fall > 0:
+                        print(f"  [{status}] {video_path.name} -> {new_name}")
+                        print(f"           Fall frames: {start_fall} - {end_fall}")
+                    else:
+                        print(f"  [{status}] {video_path.name} -> {new_name} (no annotation)")
             except Exception as e:
                 print(f"  [ERROR] Failed to copy {video_path.name}: {e}")
                 continue
