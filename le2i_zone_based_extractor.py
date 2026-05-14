@@ -61,6 +61,7 @@ from src.pifr_features import (
     MIN_MEAN_CONF,
     frame_to_vector_60,
     resample_to_length,
+    extract_pifr_features,
 )
 from src.groups import group_id_from_clip_path
 
@@ -111,7 +112,7 @@ class ExtractedFrame:
 @dataclass
 class SlidingWindowSample:
     """Một mẫu sliding window 60-frame."""
-    sequence: np.ndarray        # shape: (SEQ_LEN, 51) - chỉ keypoint (hoặc 60 với geometry)
+    sequence: np.ndarray        # shape: (SEQ_LEN, 60) - PIFR 60-D vector
     label: int                  # 0 = fall, 1 = nofall
     group_id: str               # Subject-level group (cho train/val split)
     source_video: str           # Tên video gốc
@@ -134,6 +135,19 @@ def normalize_keypoints(
     k_norm[:, 0] /= float(img_width)
     k_norm[:, 1] /= float(img_height)
     return k_norm
+
+
+def keypoint51_to_vector60(kpt_51: np.ndarray) -> np.ndarray:
+    """
+    Chuyển 51-D keypoint vector (17×3: x,y,conf) thành 60-D PIFR vector.
+
+    Args:
+        kpt_51: Array shape (51,) từ extract_keypoints_from_frame
+    Returns:
+        Array shape (60,): [17×3 keypoints, 9 geometric features]
+    """
+    kpt_17x3 = kpt_51.reshape(17, 3)
+    return extract_pifr_features(kpt_17x3.astype(np.float64))
 
 
 def select_best_person(
@@ -204,8 +218,8 @@ def extract_keypoints_from_frame(
 
     k_norm = normalize_keypoints(k_denorm, w, h)
 
-    # Truncate về 51 chiều (x, y, conf cho 17 keypoints) - không cần geometry 9D ở đây
-    # Vì sliding window sẽ dùng trực tiếp keypoints hoặc để pipeline khác thêm geometry
+    # Truncate về 51 chiều rồi chuyển lên 60-D PIFR vector
+    # Lưu ý: keypoint51_to_vector60 sẽ reshape thành (17,3) và gọi extract_pifr_features
     flat = k_norm.reshape(-1).astype(np.float32)
     return flat
 
@@ -216,7 +230,7 @@ def extract_frames_from_video(
     device: str,
 ) -> tuple[list[np.ndarray], list[int], list[float]]:
     """
-    Trích toàn bộ frame từ video thành list 51-D vectors.
+    Trích toàn bộ frame từ video thành list 60-D PIFR vectors.
 
     Returns:
         (vectors, frame_indices, confidences) - các list đồng bộ
@@ -229,7 +243,7 @@ def extract_frames_from_video(
     frame_indices: list[int] = []
     confidences: list[float] = []
 
-    prev_vec: np.ndarray | None = None
+    prev_vec_60: np.ndarray | None = None
     frame_idx = 0
 
     while True:
@@ -237,19 +251,18 @@ def extract_frames_from_video(
         if not ok:
             break
 
-        vec = extract_keypoints_from_frame(frame, model, device)
+        vec_51 = extract_keypoints_from_frame(frame, model, device)
 
-        if vec is None:
-            # Quality filter: impute với frame trước nếu có
-            if prev_vec is not None:
-                vectors.append(prev_vec.copy())
-                confidences.append(0.0)  # Đánh dấu là imputed
-            # else: bỏ qua frame đầu tiên nếu không detect được
+        if vec_51 is None:
+            if prev_vec_60 is not None:
+                vectors.append(prev_vec_60.copy())
+                confidences.append(0.0)
         else:
-            vectors.append(vec)
-            mean_conf = float(np.mean(vec.reshape(17, 3)[:, 2]))
+            vec_60 = keypoint51_to_vector60(vec_51)
+            vectors.append(vec_60.astype(np.float32))
+            mean_conf = float(np.mean(vec_51.reshape(17, 3)[:, 2]))
             confidences.append(mean_conf)
-            prev_vec = vec.copy()
+            prev_vec_60 = vec_60.copy()
 
         frame_indices.append(frame_idx)
         frame_idx += 1
@@ -419,7 +432,7 @@ def create_window_sequences(
         windows: list of (start, end) inclusive indices
 
     Returns:
-        list of (SEQ_LEN, 51) arrays - đã resampled về SEQ_LEN nếu cần
+        list of (SEQ_LEN, 60) arrays - đã resampled về SEQ_LEN nếu cần
     """
     sequences: list[np.ndarray] = []
     for start, end in windows:
@@ -794,7 +807,7 @@ Ví dụ:
     if not sources:
         raise SystemExit(
             f"Không tìm thấy video LE2I nào trong {args.aio_dir}. "
-            "Chạy trước: python prepare_le2i_dataset.py --le2i-root <path> --out AIO_Dataset"
+            "Chạy trước: python prepare_dataset.py --le2i-root <path> --out AIO_Dataset"
         )
     print(f"[INFO] Found {len(sources)} videos")
 

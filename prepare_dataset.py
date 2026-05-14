@@ -1,36 +1,42 @@
 #!/usr/bin/env python3
 """
-Gộp URFD (zip khung hình) và GMDCSA-24 vào AIO_Dataset/{fall,nofall}/.
+Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24 + LE2I.
 
-URFD: dữ liệu có thể là `*.zip` hoặc thư mục clip đã giải nén trong `Fall`/`fall` và `ADL`/`adl`
-(ví dụ `data/raw/URFD/ADL/adl-13-cam0-rgb/` hoặc `data/raw/URFD/ADL/*.zip`).
+Gộp tất cả dataset vào một thư mục AIO_Dataset/{fall,nofall}/:
+  - URFD: extract zip hoặc copy clip folders
+  - GMDCSA-24: copy video từ Subject */Fall|fall, ADL|adl
+  - LE2I: copy video, parse annotation, tạo _le2i_annotations.json
 
-GMDCSA-24 (Zenodo): mỗi subject có Fall/ADL (hoặc fall/adl) chứa video, kèm Fall.csv / ADL.csv.
-Có thể trỏ thẳng bản đã giải nén, ví dụ:
-  python prepare_dataset.py --skip-urfd --gmdcsa-root data/raw/GMDCSA24 --out AIO_Dataset
+Usage:
+  python prepare_dataset.py \
+      --urfd-root URFD_Raw \
+      --gmdcsa-root GMDCSA_Raw \
+      --le2i-root LE2I_Raw \
+      --out AIO_Dataset
 
-  python prepare_dataset.py --urfd-root URFD_Raw --gmdcsa-root GMDCSA_Raw --out AIO_Dataset
+Author: Fall Detection Team
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import shutil
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
-# Thư mục video GMDCSA24 trên Zenodo: Subject N/Fall, Subject N/ADL (hoặc fall/adl chữ thường).
+# --- Constants ---
 FALL_FOLDER_NAMES = ("Fall", "fall", "FALL")
 ADL_FOLDER_NAMES = ("ADL", "adl", "Adl")
 VIDEO_SUFFIXES = (".mp4", ".avi", ".mov", ".mkv")
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-
-# URFD: thư mục zip theo từng bản phát hành (chữ hoa / thường).
 URFD_FALL_ZIP_DIRS = ("fall", "Fall", "FALL")
 URFD_ADL_ZIP_DIRS = ("adl", "ADL", "Adl")
+LE2I_VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v")
 
 
 def _safe_stem(name: str) -> str:
@@ -38,11 +44,14 @@ def _safe_stem(name: str) -> str:
     return s or "clip"
 
 
+# =============================================================================
+# URFD Functions
+# =============================================================================
+
 def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
-    """<urfd_root>/Fall|fall và ADL|adl: nhận cả file .zip và thư mục clip đã giải nén."""
+    """Extract URFD clips (zip or extracted folders) into AIO_Dataset."""
 
     def _has_frame_images(folder: Path) -> bool:
-        # Chỉ coi là clip folder khi có ảnh frame thật sự, tránh copy nhầm thư mục trung gian.
         if not folder.is_dir():
             return False
         for p in folder.rglob("*"):
@@ -57,7 +66,7 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
         dest_parent.mkdir(parents=True, exist_ok=True)
         seen_stems: set[str] = set()
 
-        # Case 1: zip clip (tìm đệ quy để chịu được layout Kaggle lồng thư mục)
+        # Case 1: zip clips
         for zp in sorted(src_dir.rglob("*.zip"), key=lambda x: str(x).lower()):
             stem = _safe_stem(zp.stem)
             seen_stems.add(stem)
@@ -70,7 +79,7 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
             print(f"[URFD] {zp} -> {out_dir}")
             n += 1
 
-        # Case 2: already-extracted clip folder (vd adl-13-cam0-rgb/) ngay dưới ADL/Fall
+        # Case 2: extracted clip folders
         for p in sorted(src_dir.iterdir(), key=lambda x: x.name.lower()):
             if not p.is_dir():
                 continue
@@ -78,7 +87,6 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
                 continue
             stem = _safe_stem(p.name)
             if stem in seen_stems:
-                # tránh copy trùng nếu có cả zip và folder cùng tên clip
                 continue
             out_dir = dest_parent / f"urfd_{tag}_{stem}"
             if out_dir.exists():
@@ -94,6 +102,7 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
         if d.is_dir():
             n_fall += _extract_one_src(d, aio_root / "fall", "fall")
             break
+
     n_adl = 0
     for name in URFD_ADL_ZIP_DIRS:
         d = urfd_root / name
@@ -102,15 +111,15 @@ def extract_urfd_clips(urfd_root: Path, aio_root: Path) -> int:
             break
 
     if n_fall == 0 and n_adl == 0:
-        print(
-            f"[warn] URFD: không thấy clip (zip hoặc folder) dưới {urfd_root}. "
-            "Dùng --urfd-root trỏ tới thư mục cha chứa ADL và Fall, ví dụ: data/raw/URFD"
-        )
+        print(f"[warn] URFD: no clips found in {urfd_root}")
     return n_fall + n_adl
 
 
+# =============================================================================
+# GMDCSA-24 Functions
+# =============================================================================
+
 def subject_slug(subject_dir: Path) -> str:
-    """Subject_1 -> subject1"""
     m = re.search(r"(\d+)", subject_dir.name)
     if m:
         return f"subject{m.group(1)}"
@@ -157,7 +166,6 @@ def _video_paths_from_index_csv(
     subj_dir: Path,
     subdirs_first: tuple[str, ...],
 ) -> list[Path]:
-    """Đọc Fall.csv / ADL.csv; tìm file video trong subj_dir/<Fall|ADL>/ hoặc trực tiếp trong subject."""
     if not csv_path.is_file():
         return []
     out: list[Path] = []
@@ -200,7 +208,6 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
 
 
 def _collect_gmdcsa_subject_videos(subj_dir: Path) -> tuple[list[Path], list[Path]]:
-    """(fall_videos, adl_videos): ưu tiên thư mục Fall/ADL, nếu trống thì theo Fall.csv / ADL.csv."""
     fall_v: list[Path] = []
     adl_v: list[Path] = []
 
@@ -243,7 +250,7 @@ def _copy_gmdcsa_clip(src: Path, dest_parent: Path, slug: str) -> None:
 
 
 def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> int:
-    """GMDCSA-24: Subject */Fall|fall hoặc ADL|adl, hoặc chỉ số từ Fall.csv / ADL.csv (Zenodo)."""
+    """Copy GMDCSA-24 videos to AIO_Dataset."""
     n_total = 0
     for subj_dir in sorted(gmdcsa_root.iterdir(), key=lambda p: p.name.lower()):
         if not subj_dir.is_dir():
@@ -257,14 +264,245 @@ def copy_gmdcsa_videos(gmdcsa_root: Path, aio_root: Path) -> int:
             _copy_gmdcsa_clip(vid, aio_root / "nofall", slug)
             n_total += 1
         if not fall_v and not adl_v:
-            print(
-                f"[warn] GMDCSA {subj_dir.name}: không thấy video. "
-                "Cần thư mục Fall/ADL chứa .mp4 hoặc file .mp4 trùng tên trong Fall.csv/ADL.csv."
-            )
+            print(f"[warn] GMDCSA {subj_dir.name}: no videos found")
     if n_total == 0:
-        print(f"[warn] GMDCSA: không copy được video nào từ {gmdcsa_root}.")
+        print(f"[warn] GMDCSA: no videos copied from {gmdcsa_root}")
     return n_total
 
+
+# =============================================================================
+# LE2I Functions
+# =============================================================================
+
+def _normalize_video_name(name: str) -> str:
+    name = name.strip()
+    for ext in LE2I_VIDEO_EXTENSIONS:
+        if name.lower().endswith(ext.lower()):
+            name = name[: -len(ext)]
+    return name.strip()
+
+
+def _parse_le2i_annotation(ann_file: Path) -> tuple[int, int, list]:
+    """Parse LE2I annotation file. Returns (start_fall, end_fall, frame_data)."""
+    start_fall = -1
+    end_fall = -1
+    frame_data: list = []
+
+    if not ann_file.is_file():
+        return -1, -1, []
+
+    try:
+        lines = ann_file.read_text(encoding="utf-8", errors="replace").strip().split("\n")
+    except Exception:
+        return -1, -1, []
+
+    if len(lines) < 3:
+        return -1, -1, []
+
+    try:
+        start_fall = int(lines[0].strip())
+        end_fall = int(lines[1].strip())
+    except ValueError:
+        pass
+
+    for line in lines[2:]:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            frame_idx = int(parts[0].strip())
+            label = int(parts[1].strip())
+            bbox = [int(p.strip()) for p in parts[2:6]] if len(parts) >= 6 else []
+            frame_data.append((frame_idx, label, bbox))
+        except ValueError:
+            continue
+
+    if start_fall < 0 or end_fall < 0:
+        fall_frames = [f for f, l, _ in frame_data if l in (7, 8)]
+        if fall_frames:
+            start_fall = min(fall_frames)
+            end_fall = max(fall_frames)
+        else:
+            start_fall, end_fall = -1, -1
+
+    return start_fall, end_fall, frame_data
+
+
+def _find_le2i_scenes_and_videos(root: Path) -> tuple[list, dict]:
+    """Find all LE2I scenes, videos and annotations."""
+    results: list = []
+    annotations_info: dict[str, tuple[int, int]] = {}
+
+    for scene_parent in root.iterdir():
+        if not scene_parent.is_dir():
+            continue
+
+        videos_dir = None
+        ann_dir = None
+
+        for child in scene_parent.iterdir():
+            if not child.is_dir():
+                continue
+            child_name = child.name.lower()
+            if "video" in child_name:
+                videos_dir = child
+            elif "annotation" in child_name:
+                ann_dir = child
+
+        if videos_dir is None:
+            for child in scene_parent.iterdir():
+                if child.is_dir() and "video" in child.name.lower():
+                    videos_dir = child
+                    break
+
+        if ann_dir is None:
+            for child in scene_parent.iterdir():
+                if child.is_dir() and "annotation" in child.name.lower():
+                    ann_dir = child
+                    break
+
+        if videos_dir is None:
+            for f in scene_parent.iterdir():
+                if f.is_file() and f.suffix.lower() in LE2I_VIDEO_EXTENSIONS:
+                    videos_dir = scene_parent
+                    break
+
+        if videos_dir is None:
+            continue
+
+        if videos_dir.is_dir():
+            for f in videos_dir.iterdir():
+                if not f.is_file() or f.suffix.lower() not in LE2I_VIDEO_EXTENSIONS:
+                    continue
+
+                norm_name = _normalize_video_name(f.name)
+
+                ann_file = None
+                if ann_dir and ann_dir.is_dir():
+                    for af in ann_dir.iterdir():
+                        if af.is_file():
+                            ann_norm = _normalize_video_name(af.name)
+                            if ann_norm == norm_name:
+                                ann_file = af
+                                break
+
+                results.append((scene_parent, f, ann_file))
+
+                if ann_file:
+                    start, end, _ = _parse_le2i_annotation(ann_file)
+                    annotations_info[norm_name] = (start, end)
+
+    return results, annotations_info
+
+
+def _classify_video(start_fall: int, end_fall: int) -> int:
+    """Classify video: 1=fall, 0=nofall"""
+    if start_fall > 0 and end_fall > 0 and end_fall > start_fall:
+        return 1
+    return 0
+
+
+def extract_le2i_clips(
+    le2i_root: Path,
+    aio_root: Path,
+) -> tuple[int, dict[str, Any]]:
+    """Extract LE2I dataset into AIO_Dataset/{fall,nofall}/."""
+    (aio_root / "fall").mkdir(parents=True, exist_ok=True)
+    (aio_root / "nofall").mkdir(parents=True, exist_ok=True)
+
+    video_mapping: dict[str, dict[str, Any]] = {}
+    total_copied = 0
+
+    print(f"[LE2I] Scanning: {le2i_root}")
+
+    items, _ = _find_le2i_scenes_and_videos(le2i_root)
+
+    if not items:
+        print("[LE2I] No videos found!")
+        return 0, {}
+
+    print(f"[LE2I] Found {len(items)} videos")
+
+    scenes: dict[str, list] = {}
+    for scene_path, video_path, ann_file in items:
+        scene_name = _safe_stem(scene_path.name).lower()
+        if scene_name not in scenes:
+            scenes[scene_name] = []
+        scenes[scene_name].append((scene_path, video_path, ann_file))
+
+    for scene_name, scene_items in sorted(scenes.items()):
+        print(f"\n[LE2I] Scene: {scene_name} ({len(scene_items)} videos)")
+
+        for scene_path, video_path, ann_file in scene_items:
+            norm_name = _normalize_video_name(video_path.name)
+
+            start_fall, end_fall = -1, -1
+            frame_data: list = []
+            if ann_file:
+                start_fall, end_fall, frame_data = _parse_le2i_annotation(ann_file)
+
+            label = _classify_video(start_fall, end_fall)
+
+            label_tag = "fall" if label == 1 else "nofall"
+            stem = _safe_stem(video_path.stem)
+            ext = video_path.suffix.lower()
+            if ext not in LE2I_VIDEO_EXTENSIONS:
+                ext = ".avi"
+            new_name = f"le2i_{scene_name}_{label_tag}_{stem}{ext}"
+
+            dest_dir = aio_root / ("fall" if label == 1 else "nofall")
+            dest_path = dest_dir / new_name
+
+            try:
+                shutil.copy2(video_path, dest_path)
+                status = "FALL" if label == 1 else "ADL "
+                if start_fall > 0 and end_fall > 0:
+                    print(f"  [{status}] {video_path.name} -> {new_name}")
+                    print(f"           Fall frames: {start_fall} - {end_fall}")
+                else:
+                    print(f"  [{status}] {video_path.name} -> {new_name} (no annotation)")
+            except Exception as e:
+                print(f"  [ERROR] Failed to copy {video_path.name}: {e}")
+                continue
+
+            video_mapping[new_name.lower()] = {
+                "path": str(dest_path),
+                "label": label,
+                "source": str(video_path),
+                "slug": f"le2i_{scene_name}",
+                "scene": scene_name,
+                "start_fall": start_fall,
+                "end_fall": end_fall,
+                "total_frames": len(frame_data),
+            }
+
+            total_copied += 1
+
+    # Save metadata
+    meta_path = aio_root / "_le2i_annotations.json"
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(video_mapping, f, indent=2, ensure_ascii=False)
+
+    fall_count = sum(1 for v in video_mapping.values() if v["label"] == 1)
+    nofall_count = sum(1 for v in video_mapping.values() if v["label"] == 0)
+    with_ann = sum(1 for v in video_mapping.values() if v["start_fall"] >= 0)
+
+    print(f"\n[LE2I] === Summary ===")
+    print(f"  Total videos: {total_copied}")
+    print(f"  Fall videos:   {fall_count}")
+    print(f"  ADL videos:    {nofall_count}")
+    print(f"  With annotation: {with_ann}")
+    print(f"  Metadata saved: {meta_path}")
+
+    return total_copied, video_mapping
+
+
+# =============================================================================
+# Main
+# =============================================================================
 
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):
@@ -274,43 +512,97 @@ def main() -> None:
         except Exception:
             pass
 
-    ap = argparse.ArgumentParser(description="Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24")
+    ap = argparse.ArgumentParser(
+        description="Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24 + LE2I",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Datasets:
+  URFD: University of Rome Fall Dataset (zip clips hoặc extracted folders)
+  GMDCSA-24: GMDCSA24 Dataset (video files)
+  LE2I: LE2I Fall Detection Dataset (video + annotation files)
+
+Ví dụ:
+  python prepare_dataset.py \\
+      --urfd-root data/raw/URFD \\
+      --gmdcsa-root data/raw/GMDCSA24 \\
+      --le2i-root data/raw/LE2I \\
+      --out AIO_Dataset
+
+  # Chỉ URFD và GMDCSA (không có LE2I):
+  python prepare_dataset.py --urfd-root URFD --gmdcsa-root GMDCSA --out AIO_Dataset
+        """,
+    )
     ap.add_argument(
         "--urfd-root",
         type=Path,
-        default=Path("URFD_Raw"),
-        help="Thư mục cha chứa Fall|fall và ADL|adl với clip dạng .zip hoặc thư mục (vd. data/raw/URFD)",
+        default=None,
+        help="Thư mục cha chứa Fall|fall và ADL|adl (URFD)",
     )
-    ap.add_argument("--gmdcsa-root", type=Path, default=Path("GMDCSA_Raw"))
-    ap.add_argument("--out", type=Path, default=Path("AIO_Dataset"))
-    ap.add_argument("--skip-urfd", action="store_true")
-    ap.add_argument("--skip-gmdcsa", action="store_true")
+    ap.add_argument(
+        "--gmdcsa-root",
+        type=Path,
+        default=None,
+        help="Thư mục cha GMDCSA-24 (chứa Subject */Fall|ADL)",
+    )
+    ap.add_argument(
+        "--le2i-root",
+        type=Path,
+        default=None,
+        help="Thư mục gốc LE2I dataset",
+    )
+    ap.add_argument(
+        "--out",
+        type=Path,
+        default=Path("AIO_Dataset"),
+        help="Thư mục output (AIO_Dataset)",
+    )
     ap.add_argument(
         "--strict",
         action="store_true",
-        help="Fail nếu không chuẩn bị được clip nào (URFD+GMDCSA đều rỗng).",
+        help="Fail nếu không chuẩn bị được clip nào",
     )
+
     args = ap.parse_args()
 
     aio = args.out
     (aio / "fall").mkdir(parents=True, exist_ok=True)
     (aio / "nofall").mkdir(parents=True, exist_ok=True)
 
+    print("=" * 60)
+    print("AIO Dataset Preparation")
+    print("=" * 60)
+
     n_urfd = 0
-    if not args.skip_urfd and args.urfd_root.is_dir():
-        n_urfd = extract_urfd_clips(args.urfd_root, aio)
-    elif not args.skip_urfd:
-        print(f"[warn] Không thấy {args.urfd_root} — bỏ qua URFD.")
+    if args.urfd_root:
+        if args.urfd_root.is_dir():
+            n_urfd = extract_urfd_clips(args.urfd_root, aio)
+        else:
+            print(f"[warn] URFD root not found: {args.urfd_root}")
 
     n_gmdcsa = 0
-    if not args.skip_gmdcsa and args.gmdcsa_root.is_dir():
-        n_gmdcsa = copy_gmdcsa_videos(args.gmdcsa_root, aio)
-    elif not args.skip_gmdcsa:
-        print(f"[warn] Không thấy {args.gmdcsa_root} — bỏ qua GMDCSA.")
+    if args.gmdcsa_root:
+        if args.gmdcsa_root.is_dir():
+            n_gmdcsa = copy_gmdcsa_videos(args.gmdcsa_root, aio)
+        else:
+            print(f"[warn] GMDCSA root not found: {args.gmdcsa_root}")
 
-    print(f"Hoàn tất. Cấu trúc: {aio}/fall, {aio}/nofall")
-    if args.strict and (n_urfd + n_gmdcsa) == 0:
-        raise SystemExit("Không chuẩn bị được clip nào (URFD+GMDCSA rỗng).")
+    n_le2i = 0
+    if args.le2i_root:
+        if args.le2i_root.is_dir():
+            n_le2i, _ = extract_le2i_clips(args.le2i_root, aio)
+        else:
+            print(f"[warn] LE2I root not found: {args.le2i_root}")
+
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print(f"  URFD clips:  {n_urfd}")
+    print(f"  GMDCSA videos: {n_gmdcsa}")
+    print(f"  LE2I videos:   {n_le2i}")
+    print(f"  Output: {aio}")
+
+    if args.strict and (n_urfd + n_gmdcsa + n_le2i) == 0:
+        raise SystemExit("No clips prepared (URFD+GMDCSA+LE2I empty).")
 
 
 if __name__ == "__main__":

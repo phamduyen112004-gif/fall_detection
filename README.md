@@ -188,10 +188,11 @@ python app_inference.py
 ### AIO Dataset (URFD + GMDCSA-24)
 
 ```bash
-# Bước 1: Gộp dataset
+# Bước 1: Gộp tất cả 3 dataset (URFD + GMDCSA-24 + LE2I)
 python prepare_dataset.py \
     --urfd-root data/raw/URFD \
     --gmdcsa-root data/raw/GMDCSA24 \
+    --le2i-root data/raw/LE2I \
     --out AIO_Dataset
 
 # Bước 2: Trích đặc trưng
@@ -202,19 +203,16 @@ python data_extractor.py \
 
 ### LE2I Dataset (Zone-based Protocol)
 
-```bash
-# Chuẩn bị LE2I clips
-python prepare_le2i_dataset.py \
-    --le2i-root data/raw/LE2I \
-    --out AIO_Dataset \
-    --annotation-csv data/raw/LE2I/LE2I_Fall_Annotation.csv
+LE2I được gộp chung ở Bước 1 (`prepare_dataset.py`). Annotation JSON sẽ được tạo tự động tại `AIO_Dataset/_le2i_annotations.json`.
 
+```bash
 # Trích đặc trưng với Zone-based Protocol
 python le2i_zone_based_extractor.py \
     --aio-dir AIO_Dataset \
     --annotation-json AIO_Dataset/_le2i_annotations.json \
     --out-dir data/le2i_processed \
-    --val-subjects 5
+    --val-subjects 0.2 \
+    --stride 15
 ```
 
 **Zone-based Protocol:**
