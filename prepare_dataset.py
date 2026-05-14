@@ -5,13 +5,11 @@ Chuẩn bị AIO_Dataset từ URFD + GMDCSA-24 + LE2I.
 Gộp tất cả dataset vào một thư mục AIO_Dataset/{fall,nofall}/:
   - URFD: extract zip hoặc copy clip folders
   - GMDCSA-24: copy video từ Subject */Fall|fall, ADL|adl
-  - LE2I: copy video, parse annotation, tạo _le2i_annotations.json
 
 Usage:
   python prepare_dataset.py \
       --urfd-root URFD_Raw \
       --gmdcsa-root GMDCSA_Raw \
-      --le2i-root LE2I_Raw \
       --out AIO_Dataset
 
 Author: Fall Detection Team
@@ -540,9 +538,15 @@ Ví dụ:
       --le2i-root data/raw/LE2I \\
       --out AIO_Dataset
 
-  # Chỉ URFD và GMDCSA (không có LE2I):
+  # URFD và GMDCSA (không có LE2I):
   python prepare_dataset.py --urfd-root URFD --gmdcsa-root GMDCSA --out AIO_Dataset
         """,
+    )
+    ap.add_argument(
+        "--urfd-root",
+        type=Path,
+        default=None,
+        help="Thư mục cha chứa Fall|fall và ADL|adl (URFD)",
     )
     ap.add_argument(
         "--gmdcsa-root",
@@ -578,6 +582,13 @@ Ví dụ:
     print("AIO Dataset Preparation")
     print("=" * 60)
 
+    n_urfd = 0
+    if args.urfd_root:
+        if args.urfd_root.is_dir():
+            n_urfd = extract_urfd_clips(args.urfd_root, aio)
+        else:
+            print(f"[warn] URFD root not found: {args.urfd_root}")
+
     n_gmdcsa = 0
     if args.gmdcsa_root:
         if args.gmdcsa_root.is_dir():
@@ -595,11 +606,12 @@ Ví dụ:
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
+    print(f"  URFD clips:  {n_urfd}")
     print(f"  GMDCSA videos: {n_gmdcsa}")
     print(f"  LE2I videos:   {n_le2i}")
     print(f"  Output: {aio}")
 
-    if args.strict and (n_gmdcsa + n_le2i) == 0:
+    if args.strict and (n_urfd + n_gmdcsa + n_le2i) == 0:
         raise SystemExit("No clips prepared (GMDCSA+LE2I empty).")
 
 
