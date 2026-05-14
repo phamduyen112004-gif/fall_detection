@@ -545,12 +545,6 @@ Ví dụ:
         """,
     )
     ap.add_argument(
-        "--urfd-root",
-        type=Path,
-        default=None,
-        help="Thư mục cha chứa Fall|fall và ADL|adl (URFD)",
-    )
-    ap.add_argument(
         "--gmdcsa-root",
         type=Path,
         default=None,
@@ -584,13 +578,6 @@ Ví dụ:
     print("AIO Dataset Preparation")
     print("=" * 60)
 
-    n_urfd = 0
-    if args.urfd_root:
-        if args.urfd_root.is_dir():
-            n_urfd = extract_urfd_clips(args.urfd_root, aio)
-        else:
-            print(f"[warn] URFD root not found: {args.urfd_root}")
-
     n_gmdcsa = 0
     if args.gmdcsa_root:
         if args.gmdcsa_root.is_dir():
@@ -608,13 +595,12 @@ Ví dụ:
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-    print(f"  URFD clips:  {n_urfd}")
     print(f"  GMDCSA videos: {n_gmdcsa}")
     print(f"  LE2I videos:   {n_le2i}")
     print(f"  Output: {aio}")
 
-    if args.strict and (n_urfd + n_gmdcsa + n_le2i) == 0:
-        raise SystemExit("No clips prepared (URFD+GMDCSA+LE2I empty).")
+    if args.strict and (n_gmdcsa + n_le2i) == 0:
+        raise SystemExit("No clips prepared (GMDCSA+LE2I empty).")
 
 
 if __name__ == "__main__":
