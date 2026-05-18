@@ -471,7 +471,7 @@ def train_model(config: TrainingConfig, logger: logging.Logger) -> dict[str, Any
         )
 
         scheduler = ReduceLROnPlateau(
-            optimizer, mode="max", patience=10, factor=0.5, verbose=True
+            optimizer, mode="max", patience=10, factor=0.5
         )
 
         best_val_f1: float = 0.0
