@@ -558,10 +558,20 @@ def train_model(config: TrainingConfig, logger: logging.Logger) -> dict[str, Any
         logger.info("AUC-ROC:   %.4f", test_metrics['auc'])
         logger.info("Confusion Matrix: %s", test_metrics['confusion_matrix'])
 
-        results: dict[str, Any] = {
-            "test_metrics": {
-                k: v for k, v in test_metrics.items()
-            },
+        # Convert numpy types to Python native types for JSON serialization
+        def convert_to_serializable(obj):
+            if isinstance(obj, dict):
+                return {k: convert_to_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_serializable(i) for i in obj]
+            elif hasattr(obj, 'item'):  # numpy scalar
+                return obj.item()
+            elif hasattr(obj, '__float__') and not isinstance(obj, (int, float)):
+                return obj.__float__()
+            return obj
+
+        results = convert_to_serializable({
+            "test_metrics": test_metrics,
             "best_val_f1": best_val_f1,
             "config": {
                 "d_model": config.d_model,
@@ -573,7 +583,7 @@ def train_model(config: TrainingConfig, logger: logging.Logger) -> dict[str, Any
                 "learning_rate": config.learning_rate,
                 "weight_decay": config.weight_decay,
             }
-        }
+        })
 
         with open(os.path.join(config.resolved_log_dir, "metrics.json"), "w") as f:
             json.dump(results, f, indent=2)
