@@ -447,41 +447,86 @@ os.chdir(WORK_DIR)
 print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Load Processed Data Directly
+## Cell 2: Load Processed Data (Both Datasets)
 
 ```python
 import os
+import numpy as np
 from pathlib import Path
 
 WORK = Path("/kaggle/working")
 DATA = WORK / "processed_data"
 DATA.mkdir(parents=True, exist_ok=True)
 
-print("Linking processed datasets...")
+print("=" * 60)
+print("Loading ALL Processed Datasets")
+print("=" * 60)
 
-# Link datasets directly (no extraction needed)
-for source, name in [
-    ("/kaggle/input/datasets/phmthduyn/caucafall-processed", "CaucaFall"),
-    ("/kaggle/input/datasets/phmthduyn/mcfd-processed", "MCFD")
-]:
-    source_path = Path(source)
-    if source_path.exists():
-        print(f"  Found {name} at {source_path}")
-        # List sample count
-        x_files = [f for f in source_path.glob("*") if f.name.startswith('X_')]
-        print(f"  ✓ {name}: {len(x_files)} samples")
-    else:
-        print(f"  ✗ {name} not found: {source_path}")
+# Check all possible dataset sources
+cauca_sources = [
+    "/kaggle/input/datasets/phmthduyn/caucafall-processed",
+    "/kaggle/working/caucafall_processed",
+]
 
-# Set DATA_DIR to the first valid source
-if Path("/kaggle/input/datasets/phmthduyn/caucafall-processed").exists():
-    DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/caucafall-processed")
-elif Path("/kaggle/input/datasets/phmthduyn/mcfd-processed").exists():
-    DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/mcfd-processed")
+mcfd_sources = [
+    "/kaggle/input/datasets/phmthduyn/mcfd-processed",
+    "/kaggle/working/mcfd_processed",
+]
+
+# Find CaucaFall
+cauca_dir = None
+for s in cauca_sources:
+    p = Path(s)
+    if p.exists():
+        x_files = list(p.glob("X_*.npy"))
+        if len(x_files) > 0:
+            cauca_dir = p
+            print(f"✓ CaucaFall: {len(x_files)} samples at {s}")
+            break
+
+# Find MCFD
+mcfd_dir = None
+for s in mcfd_sources:
+    p = Path(s)
+    if p.exists():
+        x_files = list(p.glob("X_*.npy"))
+        if len(x_files) > 0:
+            mcfd_dir = p
+            print(f"✓ MCFD: {len(x_files)} samples at {s}")
+            break
+
+# Merge both datasets
+all_data_dirs = [d for d in [cauca_dir, mcfd_dir] if d is not None]
+
+if len(all_data_dirs) == 0:
+    print("✗ No datasets found!")
 else:
-    DATA_DIR = DATA
-
-print(f"\n✓ Data directory: {DATA_DIR}")
+    print(f"\n✓ Using {len(all_data_dirs)} dataset(s)")
+    
+    # Load all data
+    X_list = []
+    y_list = []
+    
+    for data_dir in all_data_dirs:
+        x_files = sorted([f for f in data_dir.glob("X_*.npy")])
+        y_files = sorted([f for f in data_dir.glob("y_*.npy")])
+        
+        for xf, yf in zip(x_files, y_files):
+            X_list.append(np.load(xf))
+            y_list.append(np.load(yf).item())
+    
+    X = np.array(X_list)
+    y = np.array(y_list)
+    
+    print(f"\n✓ MERGED DATASET: {len(X)} samples")
+    print(f"  Fall: {np.sum(y == 1)}, No Fall: {np.sum(y == 0)}")
+    print(f"  Shape: X={X.shape}, y={y.shape}")
+    
+    # Save merged data path for training
+    MERGED_DATA_DIR = DATA / "merged"
+    MERGED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\n✓ Merged data will be saved to: {MERGED_DATA_DIR}")
 ```
 
 ## Cell 3: Configure Training
@@ -521,43 +566,252 @@ import os
 from pathlib import Path
 from tqdm import tqdm
 import gc
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
 from src.config import TRAINING_CONFIG
-from src.trainer import train_model_kfold, setup_logging
-
-# Override data directory
-TRAINING_CONFIG.data_dir = "/kaggle/input/datasets/phmthduyn/caucafall-processed"
-TRAINING_CONFIG.model_dir = "/kaggle/working/models"
-TRAINING_CONFIG.log_dir = "/kaggle/working/logs"
+from src.trainer import HybridFallTransformer
+from src.trainer import FallDataset, setup_logging
 
 # Setup directories
-os.makedirs(TRAINING_CONFIG.model_dir, exist_ok=True)
-os.makedirs(TRAINING_CONFIG.log_dir, exist_ok=True)
+MODEL_DIR = Path("/kaggle/working/models")
+LOG_DIR = Path("/kaggle/working/logs")
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Setup logging
-logger = setup_logging(TRAINING_CONFIG.log_dir)
+logger = setup_logging(LOG_DIR)
 
 print("=" * 60)
 print("Training HybridFallTransformer with K-Fold CV")
 print("=" * 60)
-print(f"\nHyperparameters (optimized for small dataset):")
-print(f"  d_model:    {TRAINING_CONFIG.d_model}")
-print(f"  nhead:       {TRAINING_CONFIG.nhead}")
-print(f"  num_layers:  {TRAINING_CONFIG.num_layers}")
-print(f"  dropout:     {TRAINING_CONFIG.dropout}")
-print(f"  lr:          {TRAINING_CONFIG.learning_rate}")
-print(f"  batch_size:  {TRAINING_CONFIG.batch_size}")
-print(f"  epochs:      {TRAINING_CONFIG.epochs}")
-print(f"  folds:       5")
+
+# Hyperparameters
+d_model = 256
+nhead = 8
+num_layers = 4
+dropout = 0.2
+batch_size = 32
+epochs = 100
+n_folds = 5
+lr = 5e-4
+weight_decay = 1e-4
+
+print(f"\nHyperparameters:")
+print(f"  d_model:    {d_model}")
+print(f"  nhead:       {nhead}")
+print(f"  num_layers:  {num_layers}")
+print(f"  dropout:     {dropout}")
+print(f"  lr:          {lr}")
+print(f"  batch_size:  {batch_size}")
+print(f"  epochs:      {epochs}")
+print(f"  folds:       {n_folds}")
 print("=" * 60)
 
-# Train using K-Fold Cross-Validation
-test_metrics = train_model_kfold(TRAINING_CONFIG, logger, n_folds=5)
+# Load merged data
+print("\nLoading data from both datasets...")
 
-print("\n✓ Training complete!")
-print(f"  Average Accuracy: {test_metrics['accuracy']:.4f}")
-print(f"  Average F1: {test_metrics['f1']:.4f}")
-print(f"  Average AUC: {test_metrics['auc']:.4f}")
+def load_all_data():
+    """Load all processed data from available sources."""
+    X_list = []
+    y_list = []
+    
+    sources = [
+        "/kaggle/input/datasets/phmthduyn/caucafall-processed",
+        "/kaggle/input/datasets/phmthduyn/mcfd-processed",
+    ]
+    
+    for data_dir in sources:
+        p = Path(data_dir)
+        if p.exists():
+            x_files = sorted([f for f in p.glob("X_*.npy")])
+            y_files = sorted([f for f in p.glob("y_*.npy")])
+            
+            print(f"  Loading {len(x_files)} samples from {data_dir}")
+            
+            for xf, yf in zip(x_files, y_files):
+                X_list.append(np.load(xf))
+                y_list.append(np.load(yf).item())
+    
+    return np.array(X_list), np.array(y_list)
+
+X, y = load_all_data()
+print(f"\n✓ Total dataset: {len(X)} samples")
+print(f"  Fall: {np.sum(y == 1)}, No Fall: {np.sum(y == 0)}")
+print(f"  Shape: X={X.shape}, y={y.shape}")
+
+# Device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"\nDevice: {device}")
+
+# K-Fold Cross-Validation
+skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+fold_metrics = []
+best_fold = 0
+best_fold_f1 = 0.0
+
+for fold, (train_idx, test_idx) in enumerate(skf.split(X, y)):
+    print(f"\n{'='*40}")
+    print(f"FOLD {fold + 1}/{n_folds}")
+    print(f"{'='*40}")
+    
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    
+    # Split train into train and val
+    val_size = int(len(X_train) * 0.1)
+    indices = np.random.permutation(len(X_train))
+    val_idx = indices[:val_size]
+    tr_idx = indices[val_size:]
+    
+    X_tr, X_val = X_train[tr_idx], X_train[val_idx]
+    y_tr, y_val = y_train[tr_idx], y_train[val_idx]
+    
+    print(f"Train: {len(X_tr)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    
+    # Create data loaders
+    train_ds = FallDataset(X_tr, y_tr, augment=True)
+    val_ds = FallDataset(X_val, y_val, augment=False)
+    test_ds = FallDataset(X_test, y_test, augment=False)
+    
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size)
+    test_loader = torch.utils.data.DataLoader(test_ds, batch_size=batch_size)
+    
+    # Model
+    model = HybridFallTransformer(
+        input_dim=X.shape[2],
+        num_frames=X.shape[1],
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        dropout=dropout
+    ).to(device)
+    
+    criterion = torch.nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=10, factor=0.5)
+    
+    best_val_f1 = 0.0
+    patience = 0
+    
+    for epoch in range(epochs):
+        # Train
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.unsqueeze(1).to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(X_batch)
+            loss = criterion(outputs, y_batch)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            
+            train_loss += loss.item()
+        
+        # Validate
+        model.eval()
+        val_preds, val_labels = [], []
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch = X_batch.to(device)
+                outputs = model(X_batch)
+                probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+                preds = (probs > 0.5).astype(int)
+                val_preds.extend(preds.tolist())
+                val_labels.extend(y_batch.numpy().tolist())
+        
+        val_f1 = f1_score(val_labels, val_preds, zero_division=0)
+        scheduler.step(val_f1)
+        
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch+1:3d}/{epochs} | Loss: {train_loss/len(train_loader):.4f} | Val F1: {val_f1:.4f}")
+        
+        if val_f1 > best_val_f1:
+            best_val_f1 = val_f1
+            patience = 0
+            torch.save(model.state_dict(), MODEL_DIR / f"best_model_fold{fold}.pth")
+        else:
+            patience += 1
+            if patience >= 25:
+                print(f"Early stopping at epoch {epoch + 1}")
+                break
+    
+    # Evaluate on test
+    model.load_state_dict(torch.load(MODEL_DIR / f"best_model_fold{fold}.pth"))
+    model.eval()
+    
+    test_preds, test_labels, test_probs = [], [], []
+    with torch.no_grad():
+        for X_batch, y_batch in test_loader:
+            X_batch = X_batch.to(device)
+            outputs = model(X_batch)
+            probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+            preds = (probs > 0.5).astype(int)
+            test_probs.extend(probs.tolist())
+            test_preds.extend(preds.tolist())
+            test_labels.extend(y_batch.numpy().tolist())
+    
+    acc = accuracy_score(test_labels, test_preds)
+    f1 = f1_score(test_labels, test_preds, zero_division=0)
+    
+    try:
+        auc_score = roc_auc_score(test_labels, test_probs)
+    except:
+        auc_score = 0.0
+    
+    print(f"Fold {fold + 1} Test - Acc: {acc:.4f}, F1: {f1:.4f}, AUC: {auc_score:.4f}")
+    
+    fold_metrics.append({
+        "fold": fold + 1,
+        "accuracy": float(acc),
+        "f1": float(f1),
+        "auc": float(auc_score)
+    })
+    
+    if f1 > best_fold_f1:
+        best_fold_f1 = f1
+        best_fold = fold + 1
+        torch.save(model.state_dict(), MODEL_DIR / "best_model.pth")
+    
+    del model
+    torch.cuda.empty_cache()
+    gc.collect()
+
+# Summary
+print(f"\n{'='*60}")
+print("K-FOLD CROSS-VALIDATION RESULTS")
+print(f"{'='*60}")
+
+avg_acc = np.mean([m["accuracy"] for m in fold_metrics])
+avg_f1 = np.mean([m["f1"] for m in fold_metrics])
+avg_auc = np.mean([m["auc"] for m in fold_metrics])
+
+print(f"Average Accuracy: {avg_acc:.4f}")
+print(f"Average F1 Score: {avg_f1:.4f}")
+print(f"Average AUC: {avg_auc:.4f}")
+print(f"Best Fold: {best_fold} (F1: {best_fold_f1:.4f})")
+
+# Save final metrics
+import json
+results = {
+    "average_metrics": {
+        "accuracy": avg_acc,
+        "f1": avg_f1,
+        "auc": avg_auc
+    },
+    "fold_metrics": fold_metrics,
+    "best_fold": best_fold,
+    "total_samples": len(X)
+}
+
+with open(LOG_DIR / "metrics.json", "w") as f:
+    json.dump(results, f, indent=2)
+
+print(f"\n✓ Training complete!")
+print(f"✓ Model saved: {MODEL_DIR / 'best_model.pth'}")
 ```
 
 ## Cell 5: Evaluate Model
