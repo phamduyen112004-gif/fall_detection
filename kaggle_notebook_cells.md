@@ -525,31 +525,15 @@ else:
     print(f"\n✓ Merged data will be saved to: {MERGED_DATA_DIR}")
 ```
 
-## Cell 3: Configure Training
+## Cell 3: Show Loaded Data
 
 ```python
-import sys
-import logging
-from pathlib import Path
-
-# Add project to path
-sys.path.insert(0, '/kaggle/working/fall_detection')
-
-# Setup logging (trainer will also log to its own file)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-
-from src.config import TRAINING_CONFIG
-
 print("=" * 60)
-print("Training Configuration")
+print("Merged Dataset Info")
 print("=" * 60)
-print(f"Data dir: {TRAINING_CONFIG.data_dir or 'default'}")
-print(f"Model dir: {TRAINING_CONFIG.model_dir or 'default'}")
+print(f"Total samples: {len(X)}")
+print(f"Fall: {np.sum(y == 1)}, No Fall: {np.sum(y == 0)}")
+print(f"Shape: X={X.shape}, y={y.shape}")
 print("=" * 60)
 ```
 
