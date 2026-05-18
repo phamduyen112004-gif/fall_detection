@@ -28,7 +28,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
@@ -198,6 +198,39 @@ def create_data_loaders(
         random_state=42, stratify=y_train_val
     )
 
+    train_dataset = FallDataset(X_train, y_train, augment=True)
+    val_dataset = FallDataset(X_val, y_val, augment=False)
+    test_dataset = FallDataset(X_test, y_test, augment=False)
+
+    train_loader = DataLoader(
+        train_dataset, batch_size=config.batch_size,
+        shuffle=True, num_workers=0, pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=config.batch_size,
+        shuffle=False, num_workers=0, pin_memory=True
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=config.batch_size,
+        shuffle=False, num_workers=0, pin_memory=True
+    )
+
+    return train_loader, val_loader, test_loader
+
+
+def create_data_loaders(X_train, y_train, X_val, y_val, X_test, y_test, config):
+    """
+    Create data loaders with pre-split data (for K-fold).
+
+    Args:
+        X_train, y_train: Training data.
+        X_val, y_val: Validation data.
+        X_test, y_test: Test data.
+        config: Training configuration.
+
+    Returns:
+        tuple: (train_loader, val_loader, test_loader).
+    """
     train_dataset = FallDataset(X_train, y_train, augment=True)
     val_dataset = FallDataset(X_val, y_val, augment=False)
     test_dataset = FallDataset(X_test, y_test, augment=False)
@@ -610,6 +643,274 @@ def train_model(config: TrainingConfig, logger: logging.Logger) -> dict[str, Any
     except Exception as e:
         logger.error("Training failed: %s", e)
         raise
+
+
+# =============================================================================
+# K-FOLD CROSS-VALIDATION (for small datasets)
+# =============================================================================
+
+def train_model_kfold(config: TrainingConfig, logger: logging.Logger, n_folds: int = 5) -> dict[str, Any]:
+    """
+    Training with K-Fold Cross-Validation for small datasets.
+
+    Args:
+        config: Training configuration.
+        logger: Logger instance.
+        n_folds: Number of folds (default 5).
+
+    Returns:
+        dict: Aggregated test metrics across all folds.
+    """
+    try:
+        np.random.seed(42)
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+
+        os.makedirs(config.resolved_model_dir, exist_ok=True)
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("Using device: %s", device)
+
+        logger.info("Loading data from: %s", config.resolved_data_dir)
+        X, y = load_data(str(config.resolved_data_dir))
+        logger.info("Loaded %d samples. Class distribution: %s", len(X), np.bincount(y))
+
+        # K-Fold Cross-Validation
+        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+
+        fold_metrics = []
+        best_fold = 0
+        best_fold_f1 = 0.0
+
+        logger.info("=" * 60)
+        logger.info("Starting %d-Fold Cross-Validation...", n_folds)
+        logger.info("=" * 60)
+
+        for fold, (train_idx, test_idx) in enumerate(skf.split(X, y)):
+            logger.info("-" * 40)
+            logger.info("FOLD %d/%d", fold + 1, n_folds)
+            logger.info("-" * 40)
+
+            # Split data
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+
+            # Further split train into train and val (10%)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train, y_train, test_size=0.1, stratify=y_train, random_state=42
+            )
+
+            logger.info("Train: %d, Val: %d, Test: %d", len(X_train), len(X_val), len(X_test))
+
+            # Create data loaders
+            train_loader, val_loader, test_loader = create_data_loaders(X_train, y_train, X_val, y_val, X_test, y_test, config)
+
+            # Initialize model
+            model = HybridFallTransformer(
+                input_dim=config.input_dim,
+                num_frames=config.num_frames,
+                d_model=config.d_model,
+                nhead=config.nhead,
+                num_layers=config.num_layers,
+                dropout=config.dropout
+            ).to(device)
+
+            criterion = nn.BCEWithLogitsLoss()
+            optimizer = AdamW(
+                model.parameters(),
+                lr=config.learning_rate,
+                weight_decay=config.weight_decay
+            )
+            scheduler = ReduceLROnPlateau(
+                optimizer, mode="max", patience=10, factor=0.5
+            )
+
+            best_val_f1 = 0.0
+            patience_counter = 0
+
+            for epoch in range(config.epochs):
+                # Training
+                model.train()
+                total_loss = 0.0
+                num_batches = 0
+
+                indices = np.random.permutation(len(X_train))
+                for i in range(0, len(X_train), config.batch_size):
+                    idx = indices[i:i + config.batch_size]
+                    X_batch = torch.FloatTensor(X_train[idx]).to(device)
+                    y_batch = torch.FloatTensor(y_train[idx]).unsqueeze(1).to(device)
+
+                    optimizer.zero_grad()
+                    outputs = model(X_batch)
+                    loss = criterion(outputs, y_batch)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+
+                    total_loss += loss.detach().cpu().item()
+                    num_batches += 1
+
+                train_loss = total_loss / num_batches if num_batches > 0 else 0.0
+
+                # Validation
+                model.eval()
+                val_preds = []
+                val_labels = []
+                val_loss = 0.0
+
+                with torch.no_grad():
+                    for i in range(0, len(X_val), config.batch_size):
+                        X_batch = torch.FloatTensor(X_val[i:i + config.batch_size]).to(device)
+                        y_batch = torch.FloatTensor(y_val[i:i + config.batch_size]).unsqueeze(1).to(device)
+
+                        outputs = model(X_batch)
+                        loss = criterion(outputs, y_batch)
+                        val_loss += loss.item()
+
+                        probs = torch.sigmoid(outputs)
+                        preds = (probs > 0.5).float()
+                        val_preds.extend(preds.cpu().numpy().flatten().tolist())
+                        val_labels.extend(y_batch.cpu().numpy().flatten().tolist())
+
+                val_loss /= max(len(X_val) // config.batch_size, 1)
+                val_f1 = f1_score(val_labels, val_preds, zero_division=0)
+
+                logger.info(
+                    "Epoch %3d/%d | Train Loss: %.4f | Val Loss: %.4f, F1: %.4f",
+                    epoch + 1, config.epochs, train_loss, val_loss, val_f1
+                )
+
+                scheduler.step(val_f1)
+
+                if val_f1 > best_val_f1:
+                    best_val_f1 = val_f1
+                    patience_counter = 0
+                    torch.save(model.state_dict(), os.path.join(config.resolved_model_dir, f"best_model_fold{fold}.pth"))
+                else:
+                    patience_counter += 1
+                    if patience_counter >= config.early_stopping_patience:
+                        logger.info("Early stopping at epoch %d", epoch + 1)
+                        break
+
+            # Load best model and evaluate on test set
+            model.load_state_dict(torch.load(os.path.join(config.resolved_model_dir, f"best_model_fold{fold}.pth")))
+            model.eval()
+
+            test_preds = []
+            test_labels = []
+            test_probs = []
+
+            with torch.no_grad():
+                for i in range(0, len(X_test), config.batch_size):
+                    X_batch = torch.FloatTensor(X_test[i:i + config.batch_size]).to(device)
+                    outputs = model(X_batch)
+                    probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+                    preds = (probs > 0.5).astype(int)
+
+                    test_probs.extend(probs.tolist())
+                    test_preds.extend(preds.tolist())
+                    test_labels.extend(y_test[i:i + config.batch_size].tolist())
+
+            fold_acc = accuracy_score(test_labels, test_preds)
+            fold_f1 = f1_score(test_labels, test_preds, zero_division=0)
+            fold_precision = precision_score(test_labels, test_preds, zero_division=0)
+            fold_recall = recall_score(test_labels, test_preds, zero_division=0)
+
+            try:
+                fold_auc = roc_auc_score(test_labels, test_probs)
+            except:
+                fold_auc = 0.0
+
+            logger.info("Fold %d Test - Acc: %.4f, F1: %.4f, AUC: %.4f", fold + 1, fold_acc, fold_f1, fold_auc)
+
+            fold_metrics.append({
+                "fold": fold + 1,
+                "accuracy": float(fold_acc),
+                "f1": float(fold_f1),
+                "precision": float(fold_precision),
+                "recall": float(fold_recall),
+                "auc": float(fold_auc),
+                "best_val_f1": float(best_val_f1)
+            })
+
+            if fold_f1 > best_fold_f1:
+                best_fold_f1 = fold_f1
+                best_fold = fold + 1
+                torch.save(model.state_dict(), os.path.join(config.resolved_model_dir, "best_model.pth"))
+
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
+
+        # Aggregate metrics
+        logger.info("=" * 60)
+        logger.info("K-FOLD CROSS-VALIDATION RESULTS")
+        logger.info("=" * 60)
+
+        avg_metrics = {
+            "accuracy": np.mean([m["accuracy"] for m in fold_metrics]),
+            "f1": np.mean([m["f1"] for m in fold_metrics]),
+            "precision": np.mean([m["precision"] for m in fold_metrics]),
+            "recall": np.mean([m["recall"] for m in fold_metrics]),
+            "auc": np.mean([m["auc"] for m in fold_metrics]),
+        }
+        std_metrics = {
+            "accuracy": np.std([m["accuracy"] for m in fold_metrics]),
+            "f1": np.std([m["f1"] for m in fold_metrics]),
+        }
+
+        logger.info("Average Accuracy: %.4f (+/- %.4f)", avg_metrics["accuracy"], std_metrics["accuracy"])
+        logger.info("Average F1 Score: %.4f (+/- %.4f)", avg_metrics["f1"], std_metrics["f1"])
+        logger.info("Average AUC: %.4f", avg_metrics["auc"])
+        logger.info("Best Fold: %d (F1: %.4f)", best_fold, best_fold_f1)
+
+        # Save results
+        def convert_to_serializable(obj):
+            if isinstance(obj, dict):
+                return {k: convert_to_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_serializable(i) for i in obj]
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            elif hasattr(obj, '__float__') and not isinstance(obj, (int, float)):
+                return obj.__float__()
+            return obj
+
+        results = convert_to_serializable({
+            "fold_metrics": fold_metrics,
+            "average_metrics": avg_metrics,
+            "std_metrics": std_metrics,
+            "best_fold": best_fold,
+            "config": {
+                "d_model": config.d_model,
+                "nhead": config.nhead,
+                "num_layers": config.num_layers,
+                "dropout": config.dropout,
+                "batch_size": config.batch_size,
+                "learning_rate": config.learning_rate,
+                "weight_decay": config.weight_decay,
+                "n_folds": n_folds,
+            }
+        })
+
+        with open(os.path.join(config.resolved_log_dir, "metrics.json"), "w") as f:
+            json.dump(results, f, indent=2)
+
+        logger.info("Metrics saved to %s/metrics.json", config.resolved_log_dir)
+
+        return avg_metrics
+
+    except Exception as e:
+        logger.error("K-Fold training failed: %s", e)
+        raise
+
+
+def create_data_loaders_with_split(X, y, config):
+    """Create data loaders with custom train/val/test split."""
+    train_dataset = FallDataset(X, y, augment=True)
+    return DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=0, pin_memory=True)
 
 
 # =============================================================================

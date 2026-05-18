@@ -1,0 +1,3 @@
+ĐÓNG GÓP CỦA ĐỀ TÀI
+
+Đề tài đề xuất kiến trúc lai ghép YOLOv11n-Pose kết hợp Hybrid Transformer, phù hợp triển khai trên thiết bị biên Edge AI. Hệ thống trích xuất đặc trưng PIFR gồm các chỉ báo hình học - động học từ điểm khớp COCO, đảm bảo tính ổn định số học trong mọi điều kiện đầu vào. Hệ thống hoàn chỉnh với giao diện thân thiện và cơ chế cảnh báo tức thời. Về khoa học, đề tài khắc phục hạn chế của CNN/LSTM truyền thống về chi phí tính toán, phụ thuộc dài hạn và thiếu cơ chế global attention. Về thực tiễn, hệ thống đảm bảo quyền riêng tư tuyệt đối khi chỉ xử lý vector tọa độ thay vì ảnh gốc, với chi phí triển khai thấp phù hợp bệnh viện, viện dưỡng lão và hộ gia đình có người cao tuổi.

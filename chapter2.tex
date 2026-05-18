@@ -1,0 +1,278 @@
+\chapter{Cơ sở lý thuyết}
+\label{chap:theoretical_background}
+%=================================================
+
+\section{Bài toán phát hiện té ngã}
+\label{sec:fall_detection_problem}
+
+Té ngã là sự kiện con người vô tình bị mất thăng bằng và tiếp xúc với mặt đất hoặc một bề mặt cứng ở mức thấp hơn so với vị trí ban đầu. Theo định nghĩa của Tổ chức Y tế Thế giới (WHO), té ngã là sự cố khi một người nằm, trượt hoặc ngã xuống một bề mặt ở cùng mức hoặc thấp hơn mà không có yếu tố cố ý \cite{who2021falls}. Trong bối cảnh chăm sóc sức khỏe người cao tuổi, phát hiện té ngã (\textit{fall detection}) đề cập đến bài toán tự động nhận diện sự kiện té ngã từ dữ liệu cảm biến hoặc camera nhằm kích hoạt cảnh báo kịp thời cho đội ngũ y tế và người thân.
+
+Bài toán phát hiện té ngã thường được định dạng thành bài toán phân loại nhị phân hoặc đa lớp. Trong định dạng nhị phân, hệ thống cần phân biệt giữa hai lớp: \textbf{Fall} (té ngã) và \textbf{ADL} (\textit{Activities of Daily Living} -- các hoạt động sinh hoạt thông thường như đi bộ, ngồi, đứng lên). Trong định dạng đa lớp, hệ thống phân biệt thêm các hoạt động cụ thể như ngồi xuống (\textit{sitting down}), nằm xuống (\textit{lying down}), cúi người (\textit{bending}) -- những hoạt động có chuyển động tương tự té ngã và là nguồn chính gây báo động sai.
+
+Một hệ thống phát hiện té ngã hiệu quả cần đáp ứng ba tiêu chí then chốt: (1) \textbf{độ chính xác cao} với tỷ lệ phát hiện đúng (\textit{recall}) tối thiểu 90\% và tỷ lệ báo động sai (\textit{false alarm rate}) thấp; (2) \textbf{xử lý thời gian thực} với độ trễ từ khi sự kiện xảy ra đến khi cảnh báo được gửi không quá vài giây; (3) \textbf{khả năng triển khai thực tế} trên các thiết bị có tài nguyên hạn chế như Raspberry Pi, NVIDIA Jetson Nano hoặc các vi điều khiển IoT.
+
+\subsection{Các hướng tiếp cận phát hiện té ngã hiện nay}
+\label{sec:fall_detection_methods}
+
+Trong hai thập kỷ qua, cộng đồng nghiên cứu đã phát triển ba hướng tiếp cận chính cho bài toán phát hiện té ngã, mỗi hướng có ưu nhược điểm riêng biệt.
+
+\textbf{Cảm biến đeo (Wearable Sensors).} Hướng tiếp cận này sử dụng các cảm biến như gia tốc kế (\textit{accelerometer}), con quay hồi chuyển (\textit{gyroscope}) và cảm biến đo lực tác động (\textit{force sensor}) được tích hợp trong thiết bị đeo trên cổ tay, hông hoặc giày. Các nghiên cứu tiêu biểu bao gồm hệ thống dựa trên ngưỡng gia tốc kết hợp máy họy \cite{pham2025lightweight} và mô hình học sâu trên chuỗi tín hiệu cảm biến \cite{khawam2025fall}. Ưu điểm của phương pháp này là chi phí triển khai thấp và có thể hoạt động trong mọi môi trường. Tuy nhiên, nhược điểm lớn nhất là \textbf{tỷ lệ tuân thủ của người dùng thấp} (\textit{poor user compliance}) -- người cao tuổi thường quên đeo thiết bị hoặc từ chối sử dụng do cảm giác vướng víu. Ngoài ra, thiết bị đeo bị giới hạn bởi dung lượng pin và không thể phân biệt tốt giữa té ngã với các hoạt động có gia tốc tương tự.
+
+\textbf{Dựa trên tầm nhìn (Vision-Based).} Hướng tiếp cận này phân tích luồng video từ camera để nhận diện té ngã. Các phương pháp truyền thống sử dụng đặc trưng hình thức như tỷ lệ chiều cao/chiều rộng của người trong khung hình (\textit{aspect ratio}) kết hợp quỹ đạo chuyển động. Các mô hình gần đây áp dụng mạng nơ-ron tích chập 3D (3D-CNN) \cite{benabdennour2026real} hoặc kết hợp CNN với LSTM để mô hình hóa tính liên tục của chuyển động trong video. Ưu điểm của vision-based là độ chính xác cao và không yêu cầu người dùng đeo thiết bị. Tuy nhiên, việc xử lý trực tiếp trên hình ảnh RGB tạo ra \textbf{rào cản nghiêm trọng về quyền riêng tư} (\textit{privacy concerns}) \cite{ursul2024dynamic}, đặc biệt trong môi trường bệnh viện và viện dưỡng lão nơi giám sát liên tục là cần thiết.
+
+\textbf{Dựa trên khung xương (Skeleton-Based).} Hướng tiếp cận mới nổi này sử dụng mô hình ước lượng tư thế (\textit{pose estimation}) để trích xuất vị trí các điểm khớp trên cơ thể người, từ đó phân tích chuỗi tọa độ này thay vì ảnh RGB gốc. Phương pháp này kết hợp ưu điểm của cả hai hướng trên: độ chính xác cao nhờ mô hình học sâu và \textbf{bảo vệ quyền riêng tư tối ưu} vì chỉ lưu trữ các vector tọa độ không gian thay vì hình ảnh khuôn mặt hay cơ thể người \cite{khani2024skeleton}. Đây là hướng tiếp cận mà đề tài này lựa chọn.
+
+\subsection{Những thách thức trong môi trường giám sát thực tiễn}
+\label{sec:fall_detection_challenges}
+
+Việc triển khai hệ thống phát hiện té ngã trong môi trường thực tế đối mặt với nhiều thách thức đa chiều.
+
+\textbf{Vấn đề quyền riêng tư (Privacy).} Trong các cơ sở y tế và hộ gia đình, việc lắp đặt camera giám sát liên tục tạo ra lo ngại về quyền riêng tư của bệnh nhân và người cao tuổi. Hình ảnh RGB chứa thông tin nhạy cảm như khuôn mặt, trang phục và môi trường sống. Các quy định như GDPR tại Châu Âu và Luật An ninh Mạng tại Việt Nam đặt ra yêu cầu nghiêm ngặt về việc thu thập và xử lý dữ liệu hình ảnh cá nhân. Giải pháp dựa trên khung xương giải quyết vấn đề này bằng cách chỉ xử lý vector tọa độ, không lưu trữ ảnh gốc.
+
+\textbf{Vấn đề che khuất (Occlusion).} Trong môi trường thực tế, người cao tuổi có thể bị che khuất một phần hoặc hoàn toàn bởi đồ đạc, bóng đêm hoặc các vật thể trong phòng. Đối với hệ thống camera truyền thống, occlusion khiến mô hình mất thông tin quan trọng và tăng tỷ lệ bỏ sót. Các mô hình pose estimation hiện đại như YOLOv11 có khả năng nội suy điểm khớp bị che khuất dựa trên ngữ cảnh các phần nhìn thấy được của cơ thể.
+
+\textbf{Giới hạn thiết bị biên (Edge AI Constraints).} Để đạt được phản ứng thời gian thực, hệ thống cần xử lý ngay tại nơi thu thập dữ liệu thay vì gửi lên đám mây, vừa để giảm độ trễ vừa để bảo vệ quyền riêng tư. Tuy nhiên, các thiết bị biên như Raspberry Pi 4 (4GB RAM, ARM Cortex-A72) hoặc NVIDIA Jetson Nano có tài nguyên tính toán và bộ nhớ hạn chế. Các mô hình học sâu phức tạp như Vision Transformer tiêu chuẩn với hàng triệu tham số không thể chạy mượt trên phần cứng này \cite{kurniadi2026human}. Do đó, việc thiết kế kiến trúc nhẹ (\textit{lightweight architecture}) với số lượng tham số tối thiểu nhưng vẫn đảm bảo độ chính xác là thách thức cốt lõi.
+
+%-------------------------------------------------
+
+\section{Ước lượng tư thế người (Human Pose Estimation)}
+\label{sec:pose_estimation}
+
+Ước lượng tư thế người là bài toán thị giác máy tính nhằm xác định vị trí các bộ phận cơ thể hoặc điểm khớp (\textit{keypoints}) của một hoặc nhiều người trong ảnh hoặc video. Kết quả đầu ra là tập hợp các tọa độ 2D hoặc 3D cùng độ tin cậy tương ứng cho mỗi điểm khớp.
+
+Bài toán ước lượng tư thế được phân loại theo số lượng người (single-person vs multi-person) và chiều không gian đầu ra (2D vs 3D). Đối với bài toán phát hiện té ngã, ước lượng tư thế 2D multi-person với khung xương 17 điểm COCO là lựa chọn phổ biến nhất do cân bằng giữa độ chính xác và hiệu suất tính toán.
+
+\subsection{Định dạng điểm khớp chuẩn COCO}
+\label{sec:coco_keypoints}
+
+Bộ dữ liệu COCO (\textit{Common Objects in Context}) định nghĩa 17 điểm khớp chuẩn cho ước lượng tư thế người 2D, được gọi là \textbf{COCO keypoints}. Mỗi điểm khớp $k_i$ được biểu diễn bởi bộ ba giá trị $(x_i, y_i, c_i)$ trong đó $x_i, y_i$ là tọa độ pixel và $c_i \in [0, 1]$ là độ tin cậy của dự đoán.
+
+\begin{table}[h]
+\centering
+\caption{Danh sách 17 điểm khớp COCO}
+\label{tab:coco_keypoints}
+\begin{tabular}{|c|c|l|c|c|l|}
+\hline
+\textbf{ID} & \textbf{Tên} & \textbf{Mô tả} & \textbf{ID} & \textbf{Tên} & \textbf{Mô tả} \\
+\hline
+0 & nose & Mũi & 9 & l\_knee & Đầu gối trái \\
+1 & l\_eye & Mắt trái & 10 & r\_knee & Đầu gối phải \\
+2 & r\_eye & Mắt phải & 11 & l\_ankle & Mắt cá chân trái \\
+3 & l\_ear & Tai trái & 12 & r\_ankle & Mắt cá chân phải \\
+4 & r\_ear & Tai phải & 13 & l\_hip & Hông trái \\
+5 & l\_shoulder & Vai trái & 14 & r\_hip & Hông phải \\
+6 & r\_shoulder & Vai phải & 15 & l\_wrist & Cổ tay trái \\
+7 & l\_elbow & Khuỷu tay trái & 16 & r\_wrist & Cổ tay phải \\
+8 & r\_elbow & Khuỷu tay phải & \multicolumn{3}{c|}{} \\
+\hline
+\end{tabular}
+\end{table}
+
+Bộ 17 điểm khớp COCO bao phủ đầy đủ các bộ phận cơ thể thiết yếu: đầu và mặt (0-4), thân trên (5-8), thân dưới (9-12) và hông (13-14). Đặc biệt, các điểm vai, hông, đầu gối và mắt cá chân tạo thành khung xương chính của cơ thể, cung cấp đủ thông tin để nhận diện tư thế đứng, ngồi, nằm -- những trạng thái then chốt để phát hiện té ngã.
+
+Ưu điểm của việc sử dụng vector tọa độ COCO thay vì ảnh RGB gốc bao gồm: (1) \textbf{kích thước dữ liệu nhỏ gọn} -- mỗi khung hình chỉ cần lưu 51 giá trị số thực (17 điểm $\times$ 3 giá trị); (2) \textbf{bảo vệ quyền riêng tư} -- không có thông tin khuôn mặt hay môi trường xung quanh; (3) \textbf{tốc độ xử lý cao} -- mô hình học sâu phân tích chuỗi số luôn nhanh hơn phân tích video thô.
+
+\subsection{Kiến trúc mạng YOLOv11n-Pose}
+\label{sec:yolov11_pose}
+
+YOLO (\textit{You Only Look Once}) là họ mô hình thị giác máy tính nổi tiếng cho phát hiện đối tượng theo thời gian thực. YOLOv11, phiên bản mới nhất của Ultralytics, mở rộng kiến trúc để hỗ trợ ước lượng tư thế thông qua biến thể \textbf{YOLOv11n-Pose}. Phiên bản này được thiết kế đặc biệt cho thiết bị biên với hiệu suất vượt trội.
+
+Về mặt kiến trúc, YOLOv11n-Pose sử dụng backbone dựa trên khối C3k2 (\textit{Convolution, BatchNorm, SiLU with 2 convolutions kernel}) kết hợp module C2PSA (\textit{Parallelized Spatial Attention) để cân bằng giữa trích xuất đặc trưng và tốc độ. Khối C3k2 cho phép điều chỉnh kích thước kernel tích chập linh hoạt, trong khi C2PSA tích hợp cơ chế attention không gian để cải thiện độ chính xác định vị điểm khớp. Đầu ra của mô hình cho mỗi bounding box chứa thông tin về 17 điểm khớp: mỗi điểm gồm $(x, y, confidence)$.
+
+Biến thể \textbf{-nano (n)} là phiên bản siêu nhẹ nhất với chỉ khoảng 2.6 triệu tham số và FLOPs dưới 10 G, cho phép chạy ở tốc độ hơn 100 FPS trên GPU laptop và ~30 FPS trên CPU ARM. Điều này khiến YOLOv11n-Pose trở thành lựa chọn lý tưởng cho hệ thống phát hiện té ngã trên thiết bị biên IoT \cite{khanam2024yolov11}. So với phiên bản YOLOv8n-Pose, YOLOv11n cải thiện độ chính xác mAP$_{50}^{kp}$ thêm khoảng 2-3\% trong khi giữ nguyên số lượng tham số nhờ cải tiến kiến trúc backbone.
+
+%-------------------------------------------------
+
+\section{Biểu diễn đặc trưng hình học và động học}
+\label{sec:kinematic_features}
+
+Một thách thức quan trọng khi chuyển từ ảnh RGB sang vector tọa độ khung xương là làm sao biến đổi dữ liệu tọa độ thuần túy thành các đặc trưng có ý nghĩa phân biệt cho bài toán phân loại. Module PIFR (\textit{Pose-based Interesting Feature Representation}) được thiết kế nhằm giải quyết vấn đề này bằng cách tạo ra vector đặc trưng 60 chiều từ 17 điểm khớp COCO \cite{kong2025pifr}.
+
+\subsection{Toán học không gian trong phân tích tư thế}
+\label{sec:spatial_mathematics}
+
+Từ tập 17 điểm khớp $(x_i, y_i, c_i)$, ta có thể tính toán các đặc trưng hình học có ý nghĩa sinh lý. Véc-tơ xương $\vec{v}_{ij}$ giữa hai điểm khớp $i$ và $j$ được tính bằng hiệu tọa độ:
+
+\begin{equation}
+\vec{v}_{ij} = (x_j - x_i, y_j - y_i)
+\end{equation}
+
+Độ dài xương (bone length) $d_{ij}$ phản ánh khoảng cách Euclidean giữa hai điểm:
+
+\begin{equation}
+d_{ij} = \sqrt{(x_j - x_i)^2 + (y_j - y_i)^2}
+\end{equation}
+
+Góc xương $\theta_{ijk}$ tại điểm khớp $j$ giữa hai xương kề nhau $\vec{v}_{ij}$ và $\vec{v}_{jk}$ được tính bằng công thức tích vô hướng:
+
+\begin{equation}
+\theta_{ijk} = \arccos\left(\frac{\vec{v}_{ij} \cdot \vec{v}_{jk}}{\|\vec{v}_{ij}\| \cdot \|\vec{v}_{jk}\|}\right)
+\end{equation}
+
+Các đặc trưng góc đặc biệt hữu ích trong phát hiện té ngã vì chúng phản ánh tư thế tương đối của các bộ phận cơ thể. Khi một người té ngã, góc tại các khớp vai, hông và đầu gối thay đổi đột ngột so với khi đi đứng hoặc ngồi bình thường.
+
+Tốc độ thay đổi của các đặc trưng hình học -- gọi là \textbf{đặc trưng động học} (\textit{kinematic features}) -- cung cấp thông tin về động lực học chuyển động:
+
+\begin{equation}
+\dot{d}_{ij}(t) = \frac{d_{ij}(t) - d_{ij}(t-1)}{\Delta t}
+\end{equation}
+
+\begin{equation}
+\dot{\theta}_{ijk}(t) = \frac{\theta_{ijk}(t) - \theta}_{ijk}(t-1)}{\Delta t}
+\end{equation}
+
+Sự kết hợp giữa đặc trưng không gian (vị trí, góc, khoảng cách) và đặc trưng động học (tốc độ, gia tốc) tạo thành biểu diễn phong phú cho phân tích tư thế.
+
+\subsection{Module PIFR và không gian đặc trưng 60 chiều}
+\label{sec:pifr_module}
+
+Module PIFR (\textit{Pose-based Interesting Feature Representation}) \cite{kong2025pifr} nhận đầu vào là vector tọa độ 17 điểm khớp COCO tại một khung hình và tạo ra vector đặc trưng 60 chiều bao gồm:
+
+\begin{itemize}
+    \item \textbf{10 đặc trưng vị trí tuyệt đối}: tọa độ chuẩn hóa của vai, hông, đầu, trung tâm khung xương
+    \item \textbf{16 đặc trưng khoảng cách xương}: độ dài của các xương chính (tay, chân, thân, vai-hông)
+    \item \textbf{12 đặc trưng góc quan trọng}: góc vai-trái, vai-phải, hông-trái, hông-phải, đầu-gáy, thân
+    \item \textbf{6 đặc trưng tỷ lệ}: tỷ lệ chiều cao/chiều rộng, tỷ lệ thân trên/thân dưới
+    \item \textbf{8 đặc trưng động học}: tốc độ thay đổi của 4 góc quan trọng và 4 khoảng cách chính
+    \item \textbf{8 đặc trưng động học bậc 2}: gia tốc của các góc và khoảng cách
+\end{itemize}
+
+Điểm mạnh của module PIFR là tính toán đơn giản, không cần học tham số, hoàn toàn xác định và có thể tính song song trên CPU với độ trễ dưới 1ms. Vector 60D đủ compact để lưu trữ chuỗi dài (ví dụ: 30 khung hình chỉ tốn 1.8KB) nhưng vẫn chứa đủ thông tin hình học-động học cho mô hình phân loại phân biệt té ngã với ADL.
+
+%-------------------------------------------------
+
+\section{Mô hình hóa chuỗi thời gian bằng Transformer}
+\label{sec:transformer}
+
+Sau khi trích xuất đặc trưng khung xương từ YOLOv11n-Pose và biến đổi bằng module PIFR, hệ thống cần mô hình hóa sự thay đổi của các đặc trưng này theo thời gian để nhận diện khoảnh khắc té ngã. Phần này trình bày cơ sở lý thuyết của Transformer trong mô hình hóa chuỗi thời gian.
+
+\subsection{Hạn chế của mạng hồi quy (RNN/LSTM)}
+\label{sec:lstm_limitations}
+
+Mạng LSTM (\textit{Long Short-Term Memory}) được thiết kế để khắc phục hạn chế của RNN cơ bản trong việc nắm bắt phụ thuộc dài hạn thông qua cơ chế cổng (\textit{gate mechanism}) gồm forget gate, input gate và output gate. Mỗi cell duy trì một cell state $C_t$ được cập nhật có chọn lọc qua các time step:
+
+\begin{equation}
+C_t = f_t \odot C_{t-1} + i_t \odot \tilde{C}_t
+\end{equation}
+
+trong đó $f_t$ và $i_t$ lần lượt là forget gate và input gate, $\tilde{C}_t$ là candidate cell state mới.
+
+Tuy nhiên, LSTM vẫn gặp phải vấn đề \textbf{triệt tiêu đạo hàm} (\textit{vanishing gradient}) khi chuỗi thời gian quá dài. Đạo hàm của loss theo hidden state ở time step đầu tiên bị nhân liên tục bởi các ma trận trọng số qua nhiều bước thời gian, dẫn đến giá trị cực nhỏ và mạng không thể học được các phụ thuộc dài hạn hiệu quả. Điều này đặc biệt bất lợi cho bài toán phát hiện té ngã vì một cú ngã thường trải qua nhiều giai đoạn: mất thăng bằng → rơi tự do → va chạm → nằm bất động, kéo dài hàng chục khung hình.
+
+Ngoài ra, LSTM xử lý chuỗi tuần tự theo cơ chế recurrence, không thể song song hóa (\textit{parallelization}) hiệu quả trên GPU hiện đại. Điều này làm tăng độ trễ xử lý và không phù hợp cho ứng dụng thời gian thực.
+
+\subsection{Cơ chế Tự chú ý theo thời gian (Temporal Self-Attention)}
+\label{sec:temporal_self_attention}
+
+Cơ chế Self-Attention (tự chú ý) được đề xuất trong bài báo "Attention Is All You Need" \cite{vaswani2017attention} như một phương pháp thay thế hoàn toàn cho recurrence trong mô hình hóa chuỗi. Khác với LSTM xử lý từng phần tử tuần tự, Self-Attention tính toán mối quan hệ giữa tất cả các vị trí trong chuỗi đầu vào \textbf{cùng một lúc}.
+
+Cho chuỗi đặc trưng đầu vào $X = (x_1, x_2, ..., x_T)$, Self-Attention biến đổi mỗi phần tử thành ba vector: Query ($Q$), Key ($K$) và Value ($V$) thông qua ba ma trận học được $W_Q, W_K, W_V$:
+
+\begin{equation}
+Q = X W_Q, \quad K = X W_K, \quad V = X W_V
+\end{equation}
+
+Điểm số chú ý (attention score) giữa vị trí $i$ và $j$ được tính bằng tích vô hướng của query tại $i$ với key tại $j$, chia cho $\sqrt{d_k}$ để ổn định đạo hàm:
+
+\begin{equation}
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V
+\end{equation}
+
+Ma trận attention $\frac{Q K^T}{\sqrt{d_k}}$ phản ánh mức độ liên quan giữa mọi cặp vị trí trong chuỗi. Điều này cho phép mô hình \textbf{tập trung trọng số vào các khung hình chứa khoảnh khắc mất thăng bằng} mà không cần xử lý tuần tự.
+
+Trong ngữ cảnh phát hiện té ngã, cơ chế Temporal Self-Attention có thể học được rằng khoảnh khắc va chạm (impact frame) cần được chú ý nhiều hơn các khung hình trước đó, hoặc các khung hình liên tiếp trong giai đoạn rơi tự do có tương quan cao với nhau. Tính chất này vượt trội so với LSTM vốn gán trọng số ngang nhau cho mọi time step.
+
+\textbf{Multi-Head Attention} mở rộng bằng cách chạy song song nhiều attention heads với các ma trận $W_Q^{(h)}, W_K^{(h)}, W_V^{(h)}$ khác nhau, cho phép mô hình nắm bắt nhiều loại quan hệ đồng thời:
+
+\begin{equation}
+\text{MultiHead}(X) = \text{Concat}(\text{head}_1, ..., \text{head}_h) W_O
+\end{equation}
+
+\subsection{Transformer Encoder và Toán tử Mean Pooling}
+\label{sec:transformer_encoder_mean_pooling}
+
+Transformer Encoder bao gồm một lớp Multi-Head Attention theo sau bởi mạng truyền thẳng (\textit{Feed-Forward Network}) và kết nối tắt (\textit{residual connection}) cùng Layer Normalization. Cấu trúc này được lặp lại $N$ lần (thường $N=1$ đến $N=6$) để tăng độ sâu của biểu diễn.
+
+Để mô hình hóa thứ tự thời gian -- thông tin mà Self-Attention không nắm bắt được vì nó là phép toán permutation-invariant -- Transformer sử dụng \textbf{Position Encoding} cộng trực tiếp vào chuỗi đầu vào:
+
+\begin{equation}
+PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right), \quad
+PE_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)
+\end{equation}
+
+Đối với bài toán phân loại, thay vì sử dụng token [CLS] như trong BERT, hệ thống HybridFallTransformer sử dụng \textbf{toán tử Mean Pooling} để tổng hợp biểu diễn từ tất cả các khung hình:
+
+\begin{equation}
+\mathbf{z} = \text{MeanPooling}(H_L) = \frac{1}{T} \sum_{t=1}^{T} h_t^{(L)}
+\end{equation}
+
+trong đó $h_t^{(L)}$ là hidden state của khung hình $t$ ở layer cuối cùng $L$. Mean Pooling cho phép mô hình tận dụng thông tin từ toàn bộ chuỗi thay vì chỉ một token đại diện duy nhất, đồng thời giảm số lượng tham số cần học so với cách tiếp cận dùng [CLS] token.
+
+Vector $\mathbf{z}$ sau Mean Pooling có chiều bằng $d_{\text{model}}$ (kích thước hidden layer) và được đưa qua một lớp phân loại tuyến tính để dự đoán nhãn lớp.
+
+%-------------------------------------------------
+
+\section{Các công trình nghiên cứu liên quan}
+\label{sec:related_works}
+
+Phát hiện té ngã là bài toán được nghiên cứu rộng rãi trong hai thập kỷ qua. Phần này tổng hợp và phân tích các công trình tiêu biểu theo hướng tiếp cận, từ đó xác định khoảng trống nghiên cứu mà đề tài này hướng đến.
+
+\subsection{Các phương pháp phát hiện té ngã tiên tiến}
+\label{sec:advanced_methods}
+
+\textbf{Các phương pháp dựa trên cảm biến đeo.} Nghiên cứu \cite{pham2025lightweight} đề xuất mô hình Lightweight CNN phân tích chuỗi tín hiệu từ gia tốc kế và gyroscope, đạt F1-score 91.2\% trên tập dữ liệu UR Fall Detection. Tuy nhiên, hệ thống yêu cầu người dùng đeo thiết bị liên tục và tỷ lệ tuân thủ trong thử nghiệm thực tế rất thấp. Công trình \cite{khawam2025fall} cải thiện bằng cách kết hợp nhiều cảm biến và sử dụng mô hình ensemble, nhưng vẫn không giải quyết được vấn đề tuân thủ người dùng.
+
+\textbf{Các phương pháp dựa trên video và hình ảnh RGB.} Nghiên cứu \cite{benabdennour2026real} sử dụng mạng LSTM để phân tích chuỗi khung hình RGB từ camera, đạt độ chính xác 95.3\% trên tập UR Fall Detection. Tuy nhiên, việc xử lý trực tiếp trên video thô đòi hỏi GPU mạnh và không thể triển khai trên thiết bị biên. Công trình \cite{kurniadi2026human} đề xuất kiến trúc 3D-CNN tối ưu hóa cho Edge AI, nhưng vẫn sử dụng ảnh RGB và vi phạm quyền riêng tư.
+
+\textbf{Các phương pháp dựa trên khung xương.} Gần đây, nhiều nghiên cứu chuyển hướng sang sử dụng dữ liệu khung xương thay vì ảnh RGB. Công trình \cite{khani2024skeleton} sử dụng mạng GCN (\textit{Graph Convolutional Network}) trên đồ thị khung xương, đạt F1 93.8\% trên tập Le2i Fall Detection. Phương pháp này bảo vệ quyền riêng tư tốt nhưng GCN có độ phức tạp tính toán cao cho đồ thị lớn. Nghiên cứu \cite{kong2025pifr} đề xuất module PIFR kết hợp với mạng nơ-ron nhẹ, cho thấy hiệu quả của việc biến đổi tọa độ khung xương thành đặc trưng hình học-động học.
+
+\begin{table}[h]
+\centering
+\caption{So sánh các phương pháp phát hiện té ngã tiêu biểu}
+\label{tab:related_works_comparison}
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Công trình} & \textbf{Dữ liệu} & \textbf{Độ chính xác} & \textbf{Edge AI} & \textbf{Privacy} \\
+\hline
+Pham et al. (2025) \cite{pham2025lightweight} & Cảm biến đeo & 91.2\% & Có & Cao \\
+\hline
+Benabdennour et al. (2026) \cite{benabdennour2026real} & RGB Video & 95.3\% & Không & Thấp \\
+\hline
+Khani et al. (2024) \cite{khani2024skeleton} & Khung xương & 93.8\% & Không & Cao \\
+\hline
+Kong et al. (2025) \cite{kong2025pifr} & Khung xương & 94.1\% & Có & Cao \\
+\hline
+\textbf{HybridFallTransformer (đề xuất)} & \textbf{Khung xương} & \textbf{TBD} & \textbf{Có} & \textbf{Cao} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Khoảng trống nghiên cứu của đề tài}
+\label{sec:research_gap}
+
+Qua phân tích các công trình liên quan, có thể nhận thấy ba khoảng trống nghiên cứu chính:
+
+\textbf{Khoảng trống 1: Thiếu giải pháp đồng thời đáp ứng cả bốn tiêu chí.} Không có công trình nào hiện tại giải quyết đồng thời: (1) độ chính xác cao trên 94\%, (2) xử lý thời gian thực trên thiết bị biên, (3) bảo vệ quyền riêng tư tuyệt đối, và (4) tỷ lệ báo động sai thấp. Các phương pháp wearable có Edge AI nhưng không bảo vệ quyền riêng tư và có độ chính xác thấp. Các phương pháp vision-based có độ chính xác cao nhưng không đáp ứng Edge AI và quyền riêng tư.
+
+\textbf{Khoảng trống 2: Chưa có kiến trúc Hybrid Transformer nhẹ cho skeleton-based fall detection.} Phần lớn các nghiên cứu dựa trên khung xương sử dụng GCN hoặc LSTM, chưa khai thác triệt để ưu thế của Transformer trong mô hình hóa phụ thuộc dài hạn và attention. Transformer tiêu chuẩn (như trong ViT) có quá nhiều tham số, trong khi chưa có nghiên cứu nào thiết kế kiến trúc Hybrid Transformer siêu nhẹ tối ưu cho chuỗi skeleton ngắn (16-32 khung hình).
+
+\textbf{Khoảng trống 3: Thiếu hệ thống cảnh báo tức thời tích hợp IoT.} Phần lớn các nghiên cứu tập trung vào bài toán phân loại offline, chưa có giải pháp end-to-end với cơ chế cảnh báo real-time qua nền tảng IoT như Telegram được tích hợp trực tiếp vào pipeline.
+
+Dựa trên các khoảng trống trên, đề tài đề xuất hệ thống \textbf{HybridFallTransformer} với các đặc điểm: (1) sử dụng YOLOv11n-Pose để trích xuất khung xương, bảo vệ quyền riêng tư; (2) module PIFR biến đổi tọa độ thành đặc trưng 60D; (3) Hybrid Transformer Encoder siêu nhẹ với Temporal Self-Attention và Mean Pooling; (4) triển khai được trên thiết bị biên Edge AI; (5) tích hợp cơ chế cảnh báo qua Telegram.
+
+%-------------------------------------------------
+
+\section{Kết luận chương}
+\label{sec:chapter_summary}
+
+Chương này đã trình bày các nền tảng lý thuyết cần thiết cho việc hiểu thiết kế và triển khai hệ thống HybridFallTransformer.
+
+Đầu tiên, bài toán phát hiện té ngã được định nghĩa dưới dạng bài toán phân loại chuỗi thời gian, với ba hướng tiếp cận chính: wearable sensors, vision-based và skeleton-based. Trong đó, skeleton-based là hướng tiếp cận được lựa chọn vì cân bằng giữa độ chính xác và bảo vệ quyền riêng tư.
+
+Tiếp theo, hai công nghệ cốt lõi được phân tích: (1) YOLOv11n-Pose -- mô hình ước lượng tư thế siêu nhẹ với 2.6 triệu tham số, phù hợp cho thiết bị biên; (2) module PIFR -- biến đổi vector tọa độ 17 điểm COCO thành vector đặc trưng 60 chiều mang thông tin hình học và động học.
+
+Phần tiếp theo trình bày lý thuyết về mô hình hóa chuỗi thời gian, phân tích hạn chế triệt tiêu đạo hàm của LSTM và lý giải tại sao Transformer với cơ chế Self-Attention là lựa chọn tối ưu hơn. Kiến trúc Transformer Encoder với Mean Pooling được đề xuất thay thế token [CLS] truyền thống.
+
+Cuối cùng, các công trình liên quan được tổng hợp trong bảng so sánh, xác định ba khoảng trống nghiên cứu chính và dẫn dắt vào hệ thống HybridFallTransformer sẽ được trình bày chi tiết trong Chương 3.
+
+%=================================================

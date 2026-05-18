@@ -1,0 +1,27 @@
+\noindent Ngã là một trong những nguyên nhân hàng đầu gây chấn thương nghiêm trọng và tử vong ở người cao tuổi
+ \cite{who2021falls}. Nghiên cứu này đề xuất một hệ thống phát hiện ngã lai ghép kết hợp thị giác máy tính và học sâu. 
+ Hệ thống sử dụng YOLOv11n-Pose để trích xuất 17 điểm khớp xương theo chuẩn COCO (gồm: mũi, mắt, tai, vai, khuỷu tay,
+  cổ tay, hông, gối, mắt cá chân), mỗi điểm cho đầu ra tọa độ $(x, y)$ và độ tin cậy được chuẩn hóa về $[0, 1]$.
+   Tiếp theo, phương pháp PIFR (Pose-based Image Feature Representation) được áp dụng nhằm xây dựng vector đặc trưng
+    60 chiều gồm 51 chiều từ tọa độ và độ tin cậy của 17 điểm khớp cùng 9 đặc trưng hình học biểu diễn các góc và 
+    vị trí trọng tâm của cơ thể (góc thân, góc chân, góc vai, tâm khối lượng) \cite{kong2025pifr}. 
+    Kiến trúc HybridFallTransformer với ba lớp mã hóa Transformer, kích thước mô hình 256, 4 heads 
+    attention và Positional Encoding hình sin theo Vaswani et al. (2017) được sử dụng để phân tích
+     chuỗi thời gian và nhận diễn hành vi ngã \cite{benabdennour2026real}.
+
+Hệ thống được huấn luyện và đánh giá trên bộ dữ liệu CaucaFall gồm 8,244 video với 2,052 sự kiện ngã
+ và 6,192 hoạt động sinh hoạt hàng ngày, kết hợp thêm bộ dữ liệu MCFD (Multiple Cameras Fall Dataset) để 
+ kiểm tra khả năng tổng quát hóa từ nhiều góc máy quay \cite{kurniadi2026real}. Dữ liệu được chuẩn hóa bằng
+  kỹ thuật Subsampling (120 khung hình $\rightarrow$ 60 khung hình) và Padding để đồng nhất chiều dài chuỗi 
+  thời gian về 60 khung hình, phù hợp với đầu vào của Transformer. Quá trình huấn luyện sử dụng optimizer AdamW
+   với learning rate $5 \times 10^{-4}$, weight decay $10^{-5}$, batch size 64 trong tối đa 100 epochs với chiến 
+   lược Early Stopping patience 25. Các kỹ thuật tăng cường dữ liệu theo thời gian thực bao gồm Gaussian
+    Noise ($\sigma = 0.01$) và Temporal Dropout (mask ratio 0.05) được áp dụng nhằm giảm hiện tượng quá khớp. 
+    Trong giai đoạn suy luận, thuật toán Sliding Window với kích thước 60 khung hình và bước nhảy 15 khung hình
+     được sử dụng để phát hiện ngã theo thời gian thực, yêu cầu tối thiểu 8 khung hình hợp lệ để đưa ra dự đoán
+      \cite{liang2024skeleton}.
+
+Kết quả thực nghiệm cho thấy hệ thống đạt Accuracy [XX.XX\%], F1-Score [0.XXXX], Precision [0.XXXX] và Recall [0.XXXX] trên tập kiểm tra. Chỉ số ROC-AUC đạt [0.XXXX], phản ánh khả năng phân biệt mạnh mẽ của mô hình giữa lớp ngã và lớp hoạt động thường ngày. Trên phần cứng phổ thông với GPU, hệ thống duy trì tốc độ xử lý [XX FPS], đáp ứng yêu cầu phát hiện thời gian thực. Ma trận nhầm lẫn cho thấy tỷ lệ bỏ sót (miss rate) thấp ở mức [X.XX\%] đối với sự kiện ngã, trong khi tỷ lệ cảnh báo sai (false alarm rate) chỉ ở mức [X.XX\%]. Ngoài ra, hệ thống tích hợp giao diện PyQt5 để giám sát thời gian thực kèm trực quan hóa khung xương COCO, đồng thời hỗ trợ cảnh báo khẩn cấp qua Telegram khi phát hiện ngã. Kết quả này khẳng định tính khả thi và hiệu quả của mô hình trong các hệ thống giám sát an toàn y tế thông minh.
+
+\vspace{0.5cm}
+\textit{Từ khóa}: phát hiện ngã, YOLOv11n-Pose, PIFR, HybridFallTransformer, Sliding Window.

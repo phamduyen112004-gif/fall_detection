@@ -512,7 +512,7 @@ print(f"Model dir: {TRAINING_CONFIG.model_dir or 'default'}")
 print("=" * 60)
 ```
 
-## Cell 4: Execute Training
+## Cell 4: Execute Training (with K-Fold Cross-Validation)
 
 ```python
 import torch
@@ -523,7 +523,7 @@ from tqdm import tqdm
 import gc
 
 from src.config import TRAINING_CONFIG
-from src.trainer import train_model, setup_logging
+from src.trainer import train_model_kfold, setup_logging
 
 # Override data directory
 TRAINING_CONFIG.data_dir = "/kaggle/input/datasets/phmthduyn/caucafall-processed"
@@ -538,23 +538,26 @@ os.makedirs(TRAINING_CONFIG.log_dir, exist_ok=True)
 logger = setup_logging(TRAINING_CONFIG.log_dir)
 
 print("=" * 60)
-print("Training HybridFallTransformer")
+print("Training HybridFallTransformer with K-Fold CV")
 print("=" * 60)
-print(f"\nSOTA Hyperparameters:")
+print(f"\nHyperparameters (optimized for small dataset):")
 print(f"  d_model:    {TRAINING_CONFIG.d_model}")
 print(f"  nhead:       {TRAINING_CONFIG.nhead}")
 print(f"  num_layers:  {TRAINING_CONFIG.num_layers}")
 print(f"  dropout:     {TRAINING_CONFIG.dropout}")
 print(f"  lr:          {TRAINING_CONFIG.learning_rate}")
 print(f"  batch_size:  {TRAINING_CONFIG.batch_size}")
+print(f"  epochs:      {TRAINING_CONFIG.epochs}")
+print(f"  folds:       5")
 print("=" * 60)
 
-# Train using the official trainer API
-test_metrics = train_model(TRAINING_CONFIG, logger)
+# Train using K-Fold Cross-Validation
+test_metrics = train_model_kfold(TRAINING_CONFIG, logger, n_folds=5)
 
 print("\n✓ Training complete!")
-print(f"  Final Test Accuracy: {test_metrics['accuracy']:.4f}")
-print(f"  Final Test F1: {test_metrics['f1']:.4f}")
+print(f"  Average Accuracy: {test_metrics['accuracy']:.4f}")
+print(f"  Average F1: {test_metrics['f1']:.4f}")
+print(f"  Average AUC: {test_metrics['auc']:.4f}")
 ```
 
 ## Cell 5: Evaluate Model

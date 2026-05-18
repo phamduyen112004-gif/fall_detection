@@ -1,0 +1,165 @@
+================================================================================
+               TOM TAT DE TAI: HE THONG PHAT HIEN NGÃ NGUOI CAO TUỔI
+================================================================================
+
+1. GIOI THIEU & MUC TIEU
+------------------------
+Xay dung he thong phat hien ngã cho nguoi cao tuoi theo thoi gian thuc, ung dung
+trong cham sóc suc khoe. He thong su dung ket hop YOLOv11-Pose de trich xuat
+17 diem khap xuong (COCO skeleton) va Hybrid Transformer de phan tich mau
+chuyen dong theo thoi gian.
+
+2. KIEN TRUC HE THONG
+---------------------
+Trinh tu xu ly:
+
+  Video -> YOLOv11-Pose (17 keypoints/frame) -> PIFR Features (60D)
+        -> Sliding Window (60 frames) -> Hybrid Transformer -> Fall / No-Fall
+
+Thanh phan chinh:
+
+  * YOLOv11-Pose:
+    - Model: yolo11n-pose.pt
+    - 17 diem xuong COCO moi frame: nose, eyes, ears, shoulders, elbows,
+      wrists, hips, knees, ankles
+    - Output: (x, y, confidence) chuan hoa [0, 1]
+    - Nguong confidence: 0.5
+
+  * PIFR (Pose-based Image Feature Representation):
+    - 60 chieu dac trung moi frame
+    - 51D: 17 keypoints (x, y, conf)
+    - 9D dac trung hinh hoc:
+      F1: Tam khoi luong X (theo chieu ngang, co trong so confidence)
+      F2: Tam khoi luong Y (theo chieu doc, co trong so confidence)
+      F3: Góc vai-mui (nghieng dau)
+      F4: Góc than (truoc-sau, radians tu phuong thang dung)
+      F5: Góc hop (trai-phai)
+      F6: Góc vai (trai-phai)
+      F7: Góc chan trai (khop hong-giuoi-co)
+      F8: Góc chan phai (khop hong-giuoi-co)
+      F9: Góc mui-co chan (huong toan than)
+
+  * Hybrid Transformer:
+    - d_model: 256
+    - nhead: 4
+    - num_layers: 3
+    - dim_feedforward: 1024 (4 x d_model)
+    - dropout: 0.1
+    - Positional Encoding: hinh sin (Vaswani et al., 2017)
+    - Pre-LayerNorm Transformer (norm_first=True)
+    - Mean Pooling thay vi [CLS] token
+    - Activation: GELU
+
+  * Sliding Window:
+    - Do dai cua so: 60 frames
+    - Buoc nhay (stride): 15 frames
+    - So frame toi thieu de suy luan: 8
+    - Chuan hoa tam thoi: 120 frames -> 60 frames (subsample)
+
+3. DATASET
+----------
+  * CaucaFall Dataset:
+    - Video: 8,244 tong cong
+    - Falls: 2,052
+    - Non-falls: 6,192
+    - Ty le fall/non-fall: ~1:3
+
+  * MCFD (Multiple Cameras Fall Dataset):
+    - Chuyen de phat hien ngã tu nhieu goc may quay
+    - Su dung de kiem tra kha nang tong quat hoa
+
+4. HUAN LUYEN
+-------------
+  * Optimizer: AdamW
+    - Learning rate: 5e-4
+    - Weight decay: 1e-5
+  * Epochs: 100
+  * Batch size: 64
+  * Test size: 20%
+  * Validation size: 10% (tinh tu train set)
+  * Phan chia du lieu: Stratified split (giu can bang lop)
+  * Regularization:
+    - Early stopping: patience = 25 epochs
+    - Gaussian noise: noise_std = 0.01
+    - Temporal masking: mask_ratio = 0.05
+  * Scheduler: ReduceLROnPlateau
+
+5. CAC NGƯỠNG & THONG SO
+-------------------------
+  * Fall threshold (hien thi): 0.6
+  * Alert min probability: 0.18 (kich hoat canh bao Telegram)
+  * Alert cooldown: 10.0 giay (toi thieu giua hai canh bao)
+  * Tilt high threshold: 55.0 do (nguong phat hien ngã)
+
+6. KET QUA DANH GIA (cho dien sau khi chay code)
+------------------------------------------------
+  * Accuracy (do chinh xac tong the)
+  * Precision (do chinh xac)
+  * Recall (do phu hop)
+  * Specificity (do dac hiem)
+  * F1-Score (diem F1)
+  * AUC-ROC (diem AUC)
+  * Average Precision
+  * Confusion Matrix: TP, FP, FN, TN
+  * YOLO metrics: mAP@0.5, mAP@0.5:0.95
+  * Model size (MB)
+  * GFLOPs (tinh toan mo hinh)
+  * FPS (khung hinh / giay)
+  * Latency (do tre, mili giay)
+
+  Cac bieu do:
+  - PR curve (Precision-Recall curve)
+  - ROC curve (Receiver Operating Characteristic)
+  - Confusion matrix visualization
+
+  Lenh chay:
+  - Tien xu ly:     python main.py --mode preprocess
+  - Huan luyen:     python main.py --mode train
+  - Danh gia:       python main.py --mode evaluate
+
+7. TINH NANG BO SUNG
+--------------------
+  * Giao dien PyQt5: theo doi thoi gian thuc, hien thi khung xuong COCO,
+    do thi tam thoi
+  * Canh bao Telegram: gui thong bao khau cap + anh chup khi phat hien ngã
+  * Ho tro nhieu nguon: webcam, file video, chuoi RTSP
+  * Trich xuat 17 diem xuong theo thoi gian thuc voi YOLOv11-Pose
+  * Tang cua so dan gia: chi can 8 frame hop le la co the suy luan
+
+8. CONG NGHE SU DUNG
+--------------------
+  * Ngon ngu: Python 3.10+
+  * Deep Learning: PyTorch >= 2.0.0
+  * Pose Estimation: Ultralytics (YOLO) >= 8.0.0
+  * Tinh toan khoa hoc: NumPy >= 1.24.0
+  * Xu ly du lieu: Pandas >= 2.0.0
+  * May hoc: scikit-learn >= 1.3.0
+  * Trich xuat dac trung: thop >= 0.1.1 (tinh GFLOPs)
+  * Giao dien: PyQt5 >= 5.15.0
+  * Truc quan hoa: Matplotlib, Seaborn >= 3.7.0
+  * HTTP requests: Requests >= 2.28.0
+
+9. CAU TRUC DU AN
+-----------------
+  fall-detection/
+  ├── main.py                    # Diem nhap cuoi (preprocess/train/evaluate/app)
+  ├── requirements.txt           # Cac thu vien Python
+  ├── README.md                   # Tai lieu huong dan
+  ├── src/
+  │   ├── config.py              # Cau hinh trung tam (duong dan, tham so)
+  │   ├── pifr_features.py       # Trich xuat dac trung PIFR (60D)
+  │   ├── hybrid_transformer.py  # Kien truc mo hinh Transformer
+  │   ├── trainer.py             # Quy trinh huan luyen
+  │   ├── evaluator.py           # Danh gia & so sanh (metrics, bieu do)
+  │   ├── gui_app.py             # Giao dien PyQt5 + Telegram
+  │   └── utils.py               # Cac ham tien ich
+  ├── data/
+  │   ├── raw/
+  │   │   ├── caucafall/         # Du lieu CaucaFall
+  │   │   └── mcfd/              # Du lieu MCFD
+  │   └── processed/             # File .npy da tien xu ly
+  ├── models/                    # Trong so mo hinh da huan luyen
+  ├── results/                   # Ket qua danh gia (CSV, PNG)
+  └── logs/                      # Nhat ky huan luyen
+
+================================================================================

@@ -1,0 +1,52 @@
+%==============================================================================
+% PHẦN ĐÓNG GÓP VÀ Ý NGHĨA CỦA ĐỀ TÀI
+%==============================================================================
+
+\section{Đóng góp và ý nghĩa của đề tài}
+\label{sec:dong_gop_va_y_nghia}
+
+\subsection{Đóng góp về mô hình}
+\label{sec:dong_gop_model}
+
+\noindent\hspace{1.2em}Đề tài đề xuất kiến trúc lai ghép (\textit{Hybrid Architecture}) kết hợp mô hình \textit{YOLOv11n-Pose} với bộ phân loại \textit{Hybrid Transformer}, tận dụng ưu điểm của phương pháp ước lượng tư thế (\textit{Pose Estimation}) có tính bất biến theo tỷ lệ với khả năng mô hình hóa động học theo thời gian của \textit{Transformer}. Kiến trúc đề xuất sở hữu số lượng tham số nhỏ hơn đáng kể so với các mô hình \textit{3D-CNN} truyền thống, phù hợp với các ràng buộc tài nguyên của thiết bị biên (\textit{Edge AI}).
+
+\subsection{Đóng góp về hệ thống trích xuất đặc trưng}
+\label{sec:dong_gop_features}
+
+\noindenthspace{1.2em}Xây dựng và công thức hóa hệ thống trích xuất đặc trưng \textbf{PIFR} (\textit{Posture-Intensity-Fall-Related Feature Vector}) gồm 9 đặc trưng hình học -- động học được tính toán từ 17 điểm khớp theo chuẩn COCO. Toàn bộ các góc được tính bằng công thức $\arccos$ kết hợp tham số an toàn $\epsilon = 10^{-8}$ nhằm tránh lỗi chia cho $0$, qua đó đảm bảo tính ổn định số học trong mọi điều kiện đầu vào.
+
+\subsection{Đóng góp về triển khai thực tế}
+\label{sec:dong_gop_deployment}
+
+\noindenthspace{1.2em}Xây dựng hệ thống phát hiện té ngã hoàn chỉnh với giao diện PyQt5 thân thiện, tích hợp module cảnh báo \textit{Telegram Bot} với cơ chế chống spam 10 giây. Hệ thống sử dụng thuật toán cửa sổ trượt (\textit{Sliding Window}) với các tham số $\texttt{stride} = 15$ và $\texttt{maxlen} = 60$, cho phép cân bằng giữa độ nhạy phát hiện và hiệu suất tính toán.
+
+\subsection{Đóng góp về tối ưu và độ ổn định}
+\label{sec:dong_gop_optimization}
+
+\noindenthspace{1.2em}Áp dụng chiến lược \textit{Data Augmentation Isolation} nhằm ngăn chặn hiện tượng \textit{Data Leakage} trong quá trình huấn luyện. Nhóm tác giả xây dựng hàm $\texttt{temporal\_subsample}()$ với quy trình ba bước \textit{truncate} $\rightarrow$ \textit{subsample} $\rightarrow$ \textit{pad} nhằm đảm bảo đầu ra luôn có kích thước cố định $(60, 60)$ thông qua cơ chế $\texttt{assert}$. Đồng thời, các kỹ thuật quản lý bộ nhớ như $\texttt{cap.release()}$, $\texttt{del}$ và $\texttt{gc.collect()}$ được sử dụng để hạn chế hiện tượng rò rỉ bộ nhớ (\textit{Memory Leak}) trong quá trình huấn luyện kéo dài.
+
+\subsection{Ý nghĩa khoa học}
+\label{sec:y_nghia_khoa_hoc}
+
+\noindenthspace{1.2em}Nghiên cứu này đóng góp trực tiếp vào lĩnh vực phát hiện té ngã dựa trên khung xương (\textit{Skeleton-based Fall Detection}) thông qua việc đề xuất một kiến trúc lai ghép giữa \textit{YOLOv11n-Pose} và \textit{Hybrid Transformer} \cite{benabdennour2026real}. Việc ứng dụng mô hình này giúp khắc phục các hạn chế của các mạng tuần tự truyền thống (như \textit{3D-CNN} hay \textit{LSTM}) liên quan đến chi phí tính toán cao, khó mô hình hóa phụ thuộc dài hạn (\textit{Long-term Dependencies}) và thiếu cơ chế chú ý toàn cục (\textit{Global Attention}) \cite{benabdennour2026real}.
+
+\noindenthspace{1.2em}Hệ thống trích xuất đặc trưng PIFR với 9 chỉ báo hình học -- động học đã được công thức hóa toán học một cách chặt chẽ \cite{kong2025pifr}, tạo ra một bộ công cụ có khả năng tái sử dụng và mở rộng cho nhiều bài toán phân tích hành vi con người khác trong lĩnh vực thị giác máy tính, chẳng hạn như nhận diện hoạt động (\textit{Activity Recognition}) hay phát hiện hành vi bất thường (\textit{Abnormal Behavior Detection}).
+
+\subsection{Ý nghĩa thực tiễn}
+\label{sec:y_nghia_thuc_tien}
+
+\noindenthspace{1.2em}Về mặt ứng dụng, hệ thống được thiết kế để triển khai hiệu quả trong các môi trường chăm sóc sức khỏe như bệnh viện, viện dưỡng lão hoặc hộ gia đình có người cao tuổi sống một mình, với các đóng góp cụ thể sau:
+
+\begin{itemize}
+    \item[(1)] \textbf{Hỗ trợ giám sát tự động và liên tục:} Hệ thống cho phép giám sát tự động và liên tục tại các cơ sở y tế, góp phần giảm áp lực cho đội ngũ nhân viên chăm sóc trong việc theo dõi nhiều bệnh nhân cùng lúc.
+    
+    \item[(2)] \textbf{Rút ngắn thời gian phản ứng:} Cơ chế cảnh báo tức thời qua Telegram Bot giúp rút ngắn đáng kể thời gian phản ứng trong các tình huống khẩn cấp, tăng cơ hội cứu chữa kịp thời cho người bệnh.
+    
+    \item[(3)] \textbf{Tối ưu chi phí triển khai:} Kiến trúc mạng nhẹ với chỉ 4.08 triệu tham số ($\sim$4.08M \textit{parameters}) cho phép triển khai trên các thiết bị biên (\textit{Edge AI}) có tài nguyên hạn chế như \textit{NVIDIA Jetson Nano} hay \textit{Raspberry Pi}, giảm đáng kể chi phí hạ tầng so với giải pháp điện toán đám mây \cite{benabdennour2026real, pham2025lightweight}.
+    
+    \item[(4)] \textbf{Bảo vệ quyền riêng tư:} Hệ thống chỉ xử lý vector tọa độ điểm khớp thay vì lưu trữ hoặc truyền tải dữ liệu hình ảnh RGB thô, đảm bảo quyền riêng tư của người dùng theo các tiêu chuẩn bảo mật hiện đại \cite{tang2025privacy, wang2024privacy}.
+\end{itemize}
+
+%==============================================================================
+% KẾT THÚC PHẦN ĐÓNG GÓP VÀ Ý NGHĨA
+%==============================================================================

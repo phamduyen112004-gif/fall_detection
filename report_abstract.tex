@@ -1,0 +1,14 @@
+Ngã là nguyên nhân hàng đầu gây chấn thương và tử vong ở người cao tuổi \cite{who2021falls}. Các phương pháp dựa trên cảm biến đeo tay gặp hạn chế về sự khó chịu khi sử dụng lâu dài, trong khi mô hình RNN/LSTM tồn tại nhược điểm về chi phí tính toán cao và khó nắm bắt phụ thuộc dài hạn \cite{benabdennour2026real}. Do đó, phát triển hệ thống phát hiện ngã đảm bảo độ chính xác cao, có khả năng suy luận thời gian thực trên thiết bị biên (Edge AI) vẫn là bài toán mang tính thời sự trong lĩnh vực thị giác máy tính ứng dụng y tế.
+
+Nghiên cứu này đề xuất hệ thống HybridFallTransformer kết hợp YOLOv11n-Pose \cite{khanam2024yolov11} 
+và kiến trúc Hybrid Transformer \cite{benabdennour2026real} theo pipeline hai giai đoạn. Giai đoạn đầu
+ dùng YOLOv11n-Pose trích xuất 17 điểm khớp xương COCO, mỗi điểm gồm $(x, y)$ và độ tin cậy chuẩn hóa $[0, 1]$.
+  Giai đoạn sau dùng module PIFR (Pose-Informed Fall Recognition) \cite{kong2025pifr} xây dựng vector 60 chiều 
+  từ tọa độ, độ tin cậy 17 điểm khớp và 9 đặc trưng hình học - động học (góc thân, góc chân, góc vai, trọng tâ
+  m cơ thể), đưa vào bộ mã hóa Transformer nhẹ tận dụng cơ chế tự chú ý (self-attention) mô hình hóa không gian
+   - thời gian trên cửa sổ 60 khung hình.
+
+Về triển khai, hệ thống dùng PyQt5 đa luồng, thuật toán Cửa sổ trượt (Sliding Window), và module cảnh báo Telegram IoT. Thực nghiệm trên bộ dữ liệu CaucaFall \cite{guerrero2022caucafall} và MCFD \cite{auvinet2010mcfd} cho thấy hệ thống đạt Accuracy: xx\%, F1-Score: xx\%, Precision: xx\% và tốc độ xx FPS, khẳng định tính khả thi triển khai trên thiết bị biên trong môi trường chăm sóc sức khỏe thông minh.
+
+\vspace{0.5cm}
+\textit{Từ khóa}: phát hiện ngã, YOLOv11n-Pose, PIFR, HybridFallTransformer, triển khai tại biên, thị giác máy tính.
