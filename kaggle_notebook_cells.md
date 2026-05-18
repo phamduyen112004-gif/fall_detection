@@ -447,10 +447,9 @@ os.chdir(WORK_DIR)
 print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Upload & Extract Processed Data
+## Cell 2: Load Processed Data Directly
 
 ```python
-import zipfile
 import os
 from pathlib import Path
 
@@ -458,29 +457,34 @@ WORK = Path("/kaggle/working")
 DATA = WORK / "processed_data"
 DATA.mkdir(parents=True, exist_ok=True)
 
-print("Extracting processed datasets...")
+print("Linking processed datasets...")
 
-# Extract both zip files
-for zip_file, name in [
-    ("/kaggle/input/caucafall_processed.zip", "CaucaFall"),
-    ("/kaggle/input/mcfd_processed.zip", "MCFD")
+# Link datasets directly (no extraction needed)
+for source, name in [
+    ("/kaggle/input/datasets/phmthduyn/caucafall-processed", "CaucaFall"),
+    ("/kaggle/input/datasets/phmthduyn/mcfd-processed", "MCFD")
 ]:
-    if os.path.exists(zip_file):
-        print(f"  Extracting {name}...")
-        with zipfile.ZipFile(zip_file, 'r') as zf:
-            zf.extractall(DATA)
-        print(f"  ✓ {name} extracted")
+    source_path = Path(source)
+    if source_path.exists():
+        print(f"  Found {name} at {source_path}")
+        # List sample count
+        x_files = [f for f in source_path.glob("*") if f.name.startswith('X_')]
+        print(f"  ✓ {name}: {len(x_files)} samples")
     else:
-        print(f"  ✗ {name} zip not found: {zip_file}")
+        print(f"  ✗ {name} not found: {source_path}")
 
-# Count samples
-x_files = [f for f in os.listdir(DATA) if f.startswith('X_')]
-y_files = [f for f in os.listdir(DATA) if f.startswith('y_')]
-print(f"\n✓ Total samples: {len(x_files)}")
-print(f"✓ X files: {len(x_files)}, y files: {len(y_files)}")
+# Set DATA_DIR to the first valid source
+if Path("/kaggle/input/datasets/phmthduyn/caucafall-processed").exists():
+    DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/caucafall-processed")
+elif Path("/kaggle/input/datasets/phmthduyn/mcfd-processed").exists():
+    DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/mcfd-processed")
+else:
+    DATA_DIR = DATA
+
+print(f"\n✓ Data directory: {DATA_DIR}")
 ```
 
-## Cell 3: Configure & Run Training
+## Cell 3: Configure Training
 
 ```python
 import sys
@@ -490,32 +494,21 @@ from pathlib import Path
 # Add project to path
 sys.path.insert(0, '/kaggle/working/fall_detection')
 
-# Setup logging
+# Setup logging (trainer will also log to its own file)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
-    handlers=[
-        logging.FileHandler('/kaggle/working/training.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-from src.config import DEFAULT_CONFIG, TRAINING_CONFIG
+from src.config import TRAINING_CONFIG
 
 print("=" * 60)
-print("Training HybridFallTransformer")
+print("Training Configuration")
 print("=" * 60)
-print(f"\nSOTA Hyperparameters:")
-print(f"  d_model:    {TRAINING_CONFIG.D_MODEL}")
-print(f"  nhead:       {TRAINING_CONFIG.NHEAD}")
-print(f"  num_layers:  {TRAINING_CONFIG.NUM_LAYERS}")
-print(f"  dropout:     {TRAINING_CONFIG.DROPOUT}")
-print(f"  lr:          {TRAINING_CONFIG.LR}")
-print(f"  weight_decay: {TRAINING_CONFIG.WEIGHT_DECAY}")
-print(f"  batch_size:  {TRAINING_CONFIG.BATCH_SIZE}")
-print(f"  max_epochs:  {TRAINING_CONFIG.MAX_EPOCHS}")
-print(f"  patience:    {TRAINING_CONFIG.PATIENCE}")
+print(f"Data dir: {TRAINING_CONFIG.data_dir or 'default'}")
+print(f"Model dir: {TRAINING_CONFIG.model_dir or 'default'}")
 print("=" * 60)
 ```
 
@@ -524,61 +517,44 @@ print("=" * 60)
 ```python
 import torch
 import numpy as np
+import os
 from pathlib import Path
 from tqdm import tqdm
 import gc
 
-from src.hybrid_transformer import HybridFallTransformer
-from src.trainer import train_model
-
-# Paths
-DATA_DIR = Path("/kaggle/working/processed_data")
-MODEL_DIR = Path("/kaggle/working/models")
-RESULTS_DIR = Path("/kaggle/working/results")
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Load and prepare data
-logger.info("Loading data...")
-X_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('X_')])
-y_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('y_')])
-
-X = np.array([np.load(DATA_DIR / f) for f in tqdm(X_files, desc="Loading X")])
-y = np.array([np.load(DATA_DIR / f).item() for f in tqdm(y_files, desc="Loading y")])
-
-logger.info(f"Dataset: X.shape={X.shape}, y.shape={y.shape}")
-logger.info(f"Class distribution: {np.bincount(y.astype(int))}")
-
-# Initialize model
 from src.config import TRAINING_CONFIG
+from src.trainer import train_model, setup_logging
 
-model = HybridFallTransformer(
-    input_dim=TRAINING_CONFIG.INPUT_DIM,
-    num_frames=TRAINING_CONFIG.NUM_FRAMES,
-    d_model=TRAINING_CONFIG.D_MODEL,
-    nhead=TRAINING_CONFIG.NHEAD,
-    num_layers=TRAINING_CONFIG.NUM_LAYERS,
-    dropout=TRAINING_CONFIG.DROPOUT
-)
+# Override data directory
+TRAINING_CONFIG.data_dir = "/kaggle/input/datasets/phmthduyn/caucafall-processed"
+TRAINING_CONFIG.model_dir = "/kaggle/working/models"
+TRAINING_CONFIG.log_dir = "/kaggle/working/logs"
 
-# Train
-logger.info("Starting training...")
-history = train_model(
-    model=model,
-    X=X,
-    y=y,
-    epochs=TRAINING_CONFIG.MAX_EPOCHS,
-    batch_size=TRAINING_CONFIG.BATCH_SIZE,
-    lr=TRAINING_CONFIG.LR,
-    weight_decay=TRAINING_CONFIG.WEIGHT_DECAY,
-    patience=TRAINING_CONFIG.PATIENCE,
-    model_save_path=str(MODEL_DIR / "best_model.pth"),
-    results_dir=str(RESULTS_DIR)
-)
+# Setup directories
+os.makedirs(TRAINING_CONFIG.model_dir, exist_ok=True)
+os.makedirs(TRAINING_CONFIG.log_dir, exist_ok=True)
 
-# Save final model
-torch.save(model.state_dict(), MODEL_DIR / "final_model.pth")
-logger.info(f"Training complete! Model saved to {MODEL_DIR}")
+# Setup logging
+logger = setup_logging(TRAINING_CONFIG.log_dir)
+
+print("=" * 60)
+print("Training HybridFallTransformer")
+print("=" * 60)
+print(f"\nSOTA Hyperparameters:")
+print(f"  d_model:    {TRAINING_CONFIG.d_model}")
+print(f"  nhead:       {TRAINING_CONFIG.nhead}")
+print(f"  num_layers:  {TRAINING_CONFIG.num_layers}")
+print(f"  dropout:     {TRAINING_CONFIG.dropout}")
+print(f"  lr:          {TRAINING_CONFIG.learning_rate}")
+print(f"  batch_size:  {TRAINING_CONFIG.batch_size}")
+print("=" * 60)
+
+# Train using the official trainer API
+test_metrics = train_model(TRAINING_CONFIG, logger)
+
+print("\n✓ Training complete!")
+print(f"  Final Test Accuracy: {test_metrics['accuracy']:.4f}")
+print(f"  Final Test F1: {test_metrics['f1']:.4f}")
 ```
 
 ## Cell 5: Evaluate Model
@@ -586,26 +562,41 @@ logger.info(f"Training complete! Model saved to {MODEL_DIR}")
 ```python
 import torch
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
 from pathlib import Path
+from tqdm import tqdm
 
-# Load trained model
+# Paths
+DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/caucafall-processed")
 MODEL_PATH = Path("/kaggle/working/models/best_model.pth")
 
-if MODEL_PATH.exists():
+if not MODEL_PATH.exists():
+    print("✗ Model not found. Run Cell 4 first.")
+elif not DATA_DIR.exists():
+    print(f"✗ Data directory not found: {DATA_DIR}")
+else:
+    # Load data
+    print("Loading data...")
+    X_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('X_')])
+    y_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('y_')])
+    X = np.array([np.load(DATA_DIR / f) for f in tqdm(X_files, desc="Loading X")])
+    y = np.array([np.load(DATA_DIR / f).item() for f in tqdm(y_files, desc="Loading y")])
+    print(f"Dataset: X.shape={X.shape}, y.shape={y.shape}")
+    
     from src.hybrid_transformer import HybridFallTransformer
     from src.config import TRAINING_CONFIG
     
     model = HybridFallTransformer(
-        input_dim=TRAINING_CONFIG.INPUT_DIM,
-        num_frames=TRAINING_CONFIG.NUM_FRAMES,
-        d_model=TRAINING_CONFIG.D_MODEL,
-        nhead=TRAINING_CONFIG.NHEAD,
-        num_layers=TRAINING_CONFIG.NUM_LAYERS,
-        dropout=TRAINING_CONFIG.DROPOUT
+        input_dim=TRAINING_CONFIG.input_dim,
+        num_frames=TRAINING_CONFIG.num_frames,
+        d_model=TRAINING_CONFIG.d_model,
+        nhead=TRAINING_CONFIG.nhead,
+        num_layers=TRAINING_CONFIG.num_layers,
+        dropout=TRAINING_CONFIG.dropout
     )
-    model.load_state_dict(torch.load(MODEL_PATH))
+    model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
     model.eval()
     
     # Evaluate on test set
@@ -621,11 +612,11 @@ if MODEL_PATH.exists():
         for i in range(0, len(X), 64):
             batch_x = torch.FloatTensor(X[i:i+64]).to(device)
             outputs = model(batch_x)
-            probs = torch.sigmoid(outputs).cpu().numpy()
+            probs = torch.sigmoid(outputs).cpu().numpy().flatten()
             preds = (probs > 0.5).astype(int)
-            all_probs.extend(probs)
-            all_preds.extend(preds)
-            all_labels.extend(y[i:i+64])
+            all_probs.extend(probs.tolist())
+            all_preds.extend(preds.tolist())
+            all_labels.extend(y[i:i+64].tolist())
     
     # Metrics
     print("=" * 60)
@@ -644,8 +635,6 @@ if MODEL_PATH.exists():
     print(f"\nROC AUC: {roc_auc:.4f}")
     
     print("\n✓ Evaluation complete!")
-else:
-    print("✗ Model not found. Run Cell 4 first.")
 ```
 
 ## Cell 6: Save Results
@@ -682,18 +671,17 @@ print(f"✓ Size: {size:.1f} MB")
 
 | Notebook | Task | Output |
 |----------|------|--------|
-| Notebook 1 | Process CaucaFall | `caucafall_processed.zip` |
-| Notebook 2 | Process MCFD | `mcfd_processed.zip` |
+| Notebook 1 | Process CaucaFall | `caucafall-processed/` folder |
+| Notebook 2 | Process MCFD | `mcfd-processed/` folder |
 | Notebook 3 | Train Model | `fall_detection_results.zip` |
 
 ---
 
 # Quick Start Guide
 
-1. **Notebook 1**: Run Cells 1-4 → Download `caucafall_processed.zip`
-2. **Notebook 2**: Run Cells 1-4 → Download `mcfd_processed.zip`
-3. **Upload** both zip files to Kaggle as datasets
-4. **Notebook 3**: Run Cells 1-6 → Download `fall_detection_results.zip`
+1. **Notebook 1**: Run Cells 1-4 → Upload `caucafall_processed` folder as Kaggle dataset
+2. **Notebook 2**: Run Cells 1-4 → Upload `mcfd_processed` folder as Kaggle dataset
+3. **Notebook 3**: Run Cells 1-6 → Download `fall_detection_results.zip`
 
 ---
 
