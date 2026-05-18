@@ -502,7 +502,6 @@ if len(all_data_dirs) == 0:
     print("✗ No datasets found!")
 else:
     print(f"\n✓ Using {len(all_data_dirs)} dataset(s)")
-    
     # Load all data
     X_list = []
     y_list = []
@@ -521,11 +520,8 @@ else:
     print(f"\n✓ MERGED DATASET: {len(X)} samples")
     print(f"  Fall: {np.sum(y == 1)}, No Fall: {np.sum(y == 0)}")
     print(f"  Shape: X={X.shape}, y={y.shape}")
-    
-    # Save merged data path for training
     MERGED_DATA_DIR = DATA / "merged"
     MERGED_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
     print(f"\n✓ Merged data will be saved to: {MERGED_DATA_DIR}")
 ```
 
