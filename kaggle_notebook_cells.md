@@ -12,70 +12,355 @@
 
 # NOTEBOOK 1: Process CaucaFall
 
-## Cell 1: Setup
+## Cell 1: Setup & Clone Repository
 
 ```python
+import os
+import subprocess
+
+WORK_DIR = "/kaggle/working"
+os.chdir(WORK_DIR)
+
 # Clone repository
-!cd /kaggle/working && rm -rf fall_detection && \
+!cd {WORK_DIR} && rm -rf fall_detection && \
     git clone https://github.com/phamduyen112004-gif/fall_detection.git
-%cd /kaggle/working/fall_detection
+
+%cd {WORK_DIR}/fall_detection
+
+# Install dependencies
 !pip install -r requirements.txt -q
+
+print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Run
+## Cell 2: Configure for CaucaFall
 
 ```python
-%cd /kaggle/working/fall_detection
+import sys
+import os
+from pathlib import Path
 
-# Process CaucaFall - output: /kaggle/working/processed/
-!python scripts/process_caucafall.py \
-    --input "/kaggle/input/caucafall/Dataset CAUCAFall/CAUCAFall" \
-    --output "/kaggle/working/caucafall_processed"
+# Add project to path
+sys.path.insert(0, '/kaggle/working/fall_detection')
+
+# Create output directory
+OUTPUT_DIR = Path("/kaggle/working/caucafall_processed")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Update config locally for this notebook
+import src.config as config
+config.OUTPUT_DIR = OUTPUT_DIR
+
+print(f"✓ Output directory: {OUTPUT_DIR}")
+print(f"✓ Config updated")
 ```
 
-## Cell 3: Zip
+## Cell 3: Process CaucaFall Dataset
+
+```python
+import logging
+import numpy as np
+import torch
+from tqdm import tqdm
+import gc
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logger = logging.getLogger(__name__)
+
+from ultralytics import YOLO
+from src.config import CAUCAFALL_DIR, OUTPUT_DIR, TARGET_FRAMES, MAX_FRAMES, YOLO_MODEL
+from src.pifr_features import extract_keypoints, compute_pifr
+from src.utils import standardize_temporal_dim
+
+print("=" * 60)
+print("Processing CaucaFall Dataset")
+print("=" * 60)
+
+# Load YOLO model
+logger.info("Loading YOLO model...")
+model = YOLO(YOLO_MODEL)
+
+zero_fallback = np.zeros(60, dtype=np.float32)
+video_list = []
+
+# Scan directory
+for subj_dir in sorted(os.listdir(CAUCAFALL_DIR)):
+    subj_path = CAUCAFALL_DIR / subj_dir
+    if not subj_path.is_dir() or not subj_dir.startswith("Subject."):
+        continue
+    
+    for action_dir in sorted(os.listdir(subj_path)):
+        action_path = subj_path / action_dir
+        if not action_path.is_dir():
+            continue
+        
+        for video in os.listdir(action_path):
+            if not video.endswith(".avi"):
+                continue
+            
+            label = 1 if "fall" in action_dir.lower() else 0
+            video_list.append({
+                "path": action_path / video,
+                "subject": subj_dir,
+                "action": action_dir,
+                "label": label,
+            })
+
+logger.info(f"Found {len(video_list)} videos")
+
+# Process videos
+processed = skipped = errors = 0
+
+def safe_name(s):
+    return s.replace(".", "_").replace(" ", "_").replace("/", "_").replace("\\", "_")
+
+for item in tqdm(video_list, desc="CaucaFall"):
+    x_name = f"X_cauca_{safe_name(item['subject'])}_{safe_name(item['action'])}.npy"
+    y_name = f"y_cauca_{safe_name(item['subject'])}_{safe_name(item['action'])}.npy"
+    x_path = OUTPUT_DIR / x_name
+    y_path = OUTPUT_DIR / y_name
+    
+    if x_path.exists() and y_path.exists():
+        skipped += 1
+        continue
+    
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(item["path"]))
+        if not cap.isOpened():
+            errors += 1
+            continue
+        
+        features = []
+        prev = zero_fallback.copy()
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            h, w = frame.shape[:2]
+            kpts = extract_keypoints(frame, model)
+            
+            if kpts is None:
+                features.append(prev.copy())
+            else:
+                vec = compute_pifr(kpts, w, h)
+                features.append(vec)
+                prev = vec
+        
+        cap.release()
+        
+        if features:
+            feat_array = standardize_temporal_dim(np.array(features), TARGET_FRAMES, MAX_FRAMES)
+            np.save(x_path, feat_array)
+            np.save(y_path, np.array([item["label"]], dtype=np.int32))
+            processed += 1
+        
+        del features
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+    except Exception as e:
+        logger.error(f"Error processing {item['path']}: {e}")
+        errors += 1
+
+logger.info(f"Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
+print(f"\n✓ CaucaFall complete: {processed} processed, {skipped} skipped, {errors} errors")
+```
+
+## Cell 4: Zip & Verify Output
 
 ```python
 import shutil
 import os
 
-# Move files to one place and zip
 src = "/kaggle/working/caucafall_processed"
 zip_path = "/kaggle/working/caucafall_processed.zip"
 
 if os.path.exists(src):
-    shutil.make_archive(src, 'zip', src)
-    print(f"Created: {zip_path}")
-    print(f"Size: {os.path.getsize(zip_path)/1024/1024:.1f} MB")
+    # Remove existing zip if any
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+    
+    shutil.make_archive("/kaggle/working/caucafall_processed", 'zip', src)
+    size = os.path.getsize(zip_path) / 1024 / 1024
+    print(f"✓ Created: {zip_path}")
+    print(f"✓ Size: {size:.1f} MB")
+    
+    # Verify contents
+    x_files = [f for f in os.listdir(src) if f.startswith('X_')]
+    print(f"✓ Total .npy files: {len(x_files)}")
+else:
+    print("✗ Output directory not found!")
 ```
 
 ---
 
 # NOTEBOOK 2: Process MCFD
 
-## Cell 1: Setup
+## Cell 1: Setup & Clone Repository
 
 ```python
+import os
+import subprocess
+
+WORK_DIR = "/kaggle/working"
+os.chdir(WORK_DIR)
+
 # Clone repository
-!cd /kaggle/working && rm -rf fall_detection && \
+!cd {WORK_DIR} && rm -rf fall_detection && \
     git clone https://github.com/phamduyen112004-gif/fall_detection.git
-%cd /kaggle/working/fall_detection
+
+%cd {WORK_DIR}/fall_detection
+
+# Install dependencies
 !pip install -r requirements.txt -q
+
+print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Run
+## Cell 2: Configure for MCFD
 
 ```python
-%cd /kaggle/working/fall_detection
+import sys
+import os
+from pathlib import Path
+import pandas as pd
 
-# Process MCFD - output: /kaggle/working/processed/
-!python scripts/process_mcfd.py \
-    --input "/kaggle/input/multiple-cameras-fall-dataset/dataset/dataset" \
-    --csv "/kaggle/input/multiple-cameras-fall-dataset/data_tuple3.csv" \
-    --output "/kaggle/working/mcfd_processed"
+# Add project to path
+sys.path.insert(0, '/kaggle/working/fall_detection')
+
+# Create output directory
+OUTPUT_DIR = Path("/kaggle/working/mcfd_processed")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Update config
+import src.config as config
+config.OUTPUT_DIR = OUTPUT_DIR
+
+print(f"✓ Output directory: {OUTPUT_DIR}")
+print(f"✓ Config updated")
+
+# Verify CSV exists
+MCFD_CSV = Path("/kaggle/input/multiple-cameras-fall-dataset/data_tuple3.csv")
+if MCFD_CSV.exists():
+    df = pd.read_csv(MCFD_CSV)
+    print(f"✓ Found {len(df)} MCFD annotations")
+else:
+    print("✗ MCFD CSV not found!")
 ```
 
-## Cell 3: Zip
+## Cell 3: Process MCFD Dataset
+
+```python
+import logging
+import numpy as np
+import torch
+from tqdm import tqdm
+import gc
+import cv2
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logger = logging.getLogger(__name__)
+
+from ultralytics import YOLO
+from src.config import MCFD_DIR, MCFD_CSV, OUTPUT_DIR, TARGET_FRAMES, MAX_FRAMES, YOLO_MODEL
+from src.pifr_features import extract_keypoints, compute_pifr
+from src.utils import standardize_temporal_dim
+
+print("=" * 60)
+print("Processing MCFD Dataset")
+print("=" * 60)
+
+# Load YOLO model
+logger.info("Loading YOLO model...")
+model = YOLO(YOLO_MODEL)
+
+zero_fallback = np.zeros(60, dtype=np.float32)
+
+# Load annotations
+df = pd.read_csv(MCFD_CSV)
+logger.info(f"Found {len(df)} annotations to process")
+
+processed = skipped = errors = 0
+
+for idx, row in tqdm(df.iterrows(), total=len(df), desc="MCFD"):
+    chute = int(row["chute"])
+    cam = int(row["cam"])
+    start = int(row["start"])
+    end = int(row["end"])
+    label = int(row["label"])
+    
+    video_path = MCFD_DIR / f"chute{chute:02d}" / f"cam{cam}.avi"
+    
+    if not video_path.exists():
+        errors += 1
+        continue
+    
+    x_name = f"X_mcfd_c{chute:02d}_cam{cam}_row{idx}.npy"
+    y_name = f"y_mcfd_c{chute:02d}_cam{cam}_row{idx}.npy"
+    x_path = OUTPUT_DIR / x_name
+    y_path = OUTPUT_DIR / y_name
+    
+    if x_path.exists() and y_path.exists():
+        skipped += 1
+        continue
+    
+    try:
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            errors += 1
+            continue
+        
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        
+        features = []
+        prev = zero_fallback.copy()
+        cur = start
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret or cur > end:
+                break
+            
+            h, w = frame.shape[:2]
+            kpts = extract_keypoints(frame, model)
+            
+            if kpts is None:
+                features.append(prev.copy())
+            else:
+                vec = compute_pifr(kpts, w, h)
+                features.append(vec)
+                prev = vec
+            
+            cur += 1
+        
+        cap.release()
+        
+        if features:
+            feat_array = standardize_temporal_dim(np.array(features), TARGET_FRAMES, MAX_FRAMES)
+            np.save(x_path, feat_array)
+            np.save(y_path, np.array([label], dtype=np.int32))
+            processed += 1
+        
+        del features
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+    except Exception as e:
+        logger.error(f"Error processing {video_path}: {e}")
+        errors += 1
+
+logger.info(f"Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
+print(f"\n✓ MCFD complete: {processed} processed, {skipped} skipped, {errors} errors")
+```
+
+## Cell 4: Zip & Verify Output
 
 ```python
 import shutil
@@ -85,104 +370,297 @@ src = "/kaggle/working/mcfd_processed"
 zip_path = "/kaggle/working/mcfd_processed.zip"
 
 if os.path.exists(src):
-    shutil.make_archive(src, 'zip', src)
-    print(f"Created: {zip_path}")
-    print(f"Size: {os.path.getsize(zip_path)/1024/1024:.1f} MB")
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+    
+    shutil.make_archive("/kaggle/working/mcfd_processed", 'zip', src)
+    size = os.path.getsize(zip_path) / 1024 / 1024
+    print(f"✓ Created: {zip_path}")
+    print(f"✓ Size: {size:.1f} MB")
+    
+    # Verify contents
+    x_files = [f for f in os.listdir(src) if f.startswith('X_')]
+    print(f"✓ Total .npy files: {len(x_files)}")
+else:
+    print("✗ Output directory not found!")
 ```
 
 ---
 
 # NOTEBOOK 3: Train Model
 
-## Cell 1: Setup
+## Cell 1: Setup & Clone Repository
 
 ```python
+import os
+import sys
+
+WORK_DIR = "/kaggle/working"
+os.chdir(WORK_DIR)
+
 # Clone repository
-!cd /kaggle/working && rm -rf fall_detection && \
+!cd {WORK_DIR} && rm -rf fall_detection && \
     git clone https://github.com/phamduyen112004-gif/fall_detection.git
-%cd /kaggle/working/fall_detection
+
+%cd {WORK_DIR}/fall_detection
+
+# Install dependencies
 !pip install -r requirements.txt -q
+
+print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Merge Data
+## Cell 2: Upload & Extract Processed Data
 
 ```python
-# Upload caucafall_processed.zip and mcfd_processed.zip to Kaggle input
-# Then extract and merge
+import zipfile
+import os
+from pathlib import Path
 
-import zipfile, os
+WORK = Path("/kaggle/working")
+DATA = WORK / "processed_data"
+DATA.mkdir(parents=True, exist_ok=True)
 
-WORK = "/kaggle/working"
-DATA = "/kaggle/working/processed_data"
-os.makedirs(DATA, exist_ok=True)
+print("Extracting processed datasets...")
 
 # Extract both zip files
-for zip_file in [
-    "/kaggle/input/caucafall_processed.zip",
-    "/kaggle/input/mcfd_processed.zip"
+for zip_file, name in [
+    ("/kaggle/input/caucafall_processed.zip", "CaucaFall"),
+    ("/kaggle/input/mcfd_processed.zip", "MCFD")
 ]:
     if os.path.exists(zip_file):
-        print(f"Extracting {zip_file}...")
+        print(f"  Extracting {name}...")
         with zipfile.ZipFile(zip_file, 'r') as zf:
             zf.extractall(DATA)
+        print(f"  ✓ {name} extracted")
+    else:
+        print(f"  ✗ {name} zip not found: {zip_file}")
 
-# Count
+# Count samples
 x_files = [f for f in os.listdir(DATA) if f.startswith('X_')]
-print(f"Total samples: {len(x_files)}")
+y_files = [f for f in os.listdir(DATA) if f.startswith('y_')]
+print(f"\n✓ Total samples: {len(x_files)}")
+print(f"✓ X files: {len(x_files)}, y files: {len(y_files)}")
 ```
 
-## Cell 3: Train
+## Cell 3: Configure & Run Training
 
 ```python
-%cd /kaggle/working/fall_detection
+import sys
+import logging
+from pathlib import Path
 
-# Train model
-!python scripts/train.py \
-    --data "/kaggle/working/processed_data" \
-    --output "/kaggle/working/models" \
-    --results "/kaggle/working/results" \
-    --epochs 100 \
-    --batch-size 64
+# Add project to path
+sys.path.insert(0, '/kaggle/working/fall_detection')
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    handlers=[
+        logging.FileHandler('/kaggle/working/training.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+from src.config import DEFAULT_CONFIG, TRAINING_CONFIG
+
+print("=" * 60)
+print("Training HybridFallTransformer")
+print("=" * 60)
+print(f"\nSOTA Hyperparameters:")
+print(f"  d_model:    {TRAINING_CONFIG.D_MODEL}")
+print(f"  nhead:       {TRAINING_CONFIG.NHEAD}")
+print(f"  num_layers:  {TRAINING_CONFIG.NUM_LAYERS}")
+print(f"  dropout:     {TRAINING_CONFIG.DROPOUT}")
+print(f"  lr:          {TRAINING_CONFIG.LR}")
+print(f"  weight_decay: {TRAINING_CONFIG.WEIGHT_DECAY}")
+print(f"  batch_size:  {TRAINING_CONFIG.BATCH_SIZE}")
+print(f"  max_epochs:  {TRAINING_CONFIG.MAX_EPOCHS}")
+print(f"  patience:    {TRAINING_CONFIG.PATIENCE}")
+print("=" * 60)
 ```
 
-## Cell 4: Save Results
+## Cell 4: Execute Training
+
+```python
+import torch
+import numpy as np
+from pathlib import Path
+from tqdm import tqdm
+import gc
+
+from src.hybrid_transformer import HybridFallTransformer
+from src.trainer import train_model
+
+# Paths
+DATA_DIR = Path("/kaggle/working/processed_data")
+MODEL_DIR = Path("/kaggle/working/models")
+RESULTS_DIR = Path("/kaggle/working/results")
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Load and prepare data
+logger.info("Loading data...")
+X_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('X_')])
+y_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('y_')])
+
+X = np.array([np.load(DATA_DIR / f) for f in tqdm(X_files, desc="Loading X")])
+y = np.array([np.load(DATA_DIR / f).item() for f in tqdm(y_files, desc="Loading y")])
+
+logger.info(f"Dataset: X.shape={X.shape}, y.shape={y.shape}")
+logger.info(f"Class distribution: {np.bincount(y.astype(int))}")
+
+# Initialize model
+from src.config import TRAINING_CONFIG
+
+model = HybridFallTransformer(
+    input_dim=TRAINING_CONFIG.INPUT_DIM,
+    num_frames=TRAINING_CONFIG.NUM_FRAMES,
+    d_model=TRAINING_CONFIG.D_MODEL,
+    nhead=TRAINING_CONFIG.NHEAD,
+    num_layers=TRAINING_CONFIG.NUM_LAYERS,
+    dropout=TRAINING_CONFIG.DROPOUT
+)
+
+# Train
+logger.info("Starting training...")
+history = train_model(
+    model=model,
+    X=X,
+    y=y,
+    epochs=TRAINING_CONFIG.MAX_EPOCHS,
+    batch_size=TRAINING_CONFIG.BATCH_SIZE,
+    lr=TRAINING_CONFIG.LR,
+    weight_decay=TRAINING_CONFIG.WEIGHT_DECAY,
+    patience=TRAINING_CONFIG.PATIENCE,
+    model_save_path=str(MODEL_DIR / "best_model.pth"),
+    results_dir=str(RESULTS_DIR)
+)
+
+# Save final model
+torch.save(model.state_dict(), MODEL_DIR / "final_model.pth")
+logger.info(f"Training complete! Model saved to {MODEL_DIR}")
+```
+
+## Cell 5: Evaluate Model
+
+```python
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
+from pathlib import Path
+
+# Load trained model
+MODEL_PATH = Path("/kaggle/working/models/best_model.pth")
+
+if MODEL_PATH.exists():
+    from src.hybrid_transformer import HybridFallTransformer
+    from src.config import TRAINING_CONFIG
+    
+    model = HybridFallTransformer(
+        input_dim=TRAINING_CONFIG.INPUT_DIM,
+        num_frames=TRAINING_CONFIG.NUM_FRAMES,
+        d_model=TRAINING_CONFIG.D_MODEL,
+        nhead=TRAINING_CONFIG.NHEAD,
+        num_layers=TRAINING_CONFIG.NUM_LAYERS,
+        dropout=TRAINING_CONFIG.DROPOUT
+    )
+    model.load_state_dict(torch.load(MODEL_PATH))
+    model.eval()
+    
+    # Evaluate on test set
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
+    # Get predictions
+    all_preds = []
+    all_probs = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for i in range(0, len(X), 64):
+            batch_x = torch.FloatTensor(X[i:i+64]).to(device)
+            outputs = model(batch_x)
+            probs = torch.sigmoid(outputs).cpu().numpy()
+            preds = (probs > 0.5).astype(int)
+            all_probs.extend(probs)
+            all_preds.extend(preds)
+            all_labels.extend(y[i:i+64])
+    
+    # Metrics
+    print("=" * 60)
+    print("EVALUATION RESULTS")
+    print("=" * 60)
+    print(classification_report(all_labels, all_preds, target_names=['No Fall', 'Fall']))
+    
+    # Confusion Matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    print("Confusion Matrix:")
+    print(cm)
+    
+    # ROC Curve
+    fpr, tpr, _ = roc_curve(all_labels, all_probs)
+    roc_auc = auc(fpr, tpr)
+    print(f"\nROC AUC: {roc_auc:.4f}")
+    
+    print("\n✓ Evaluation complete!")
+else:
+    print("✗ Model not found. Run Cell 4 first.")
+```
+
+## Cell 6: Save Results
 
 ```python
 import shutil
 import os
+from pathlib import Path
 
-# Zip final results
-src = "/kaggle/working/results"
+# Create zip of results
+MODEL_DIR = Path("/kaggle/working/models")
+RESULTS_DIR = Path("/kaggle/working/results")
+
 zip_path = "/kaggle/working/fall_detection_results.zip"
 
-if os.path.exists(src):
-    shutil.make_archive(src, 'zip', src)
-    print(f"Created: {zip_path}")
-    print(f"Size: {os.path.getsize(zip_path)/1024/1024:.1f} MB")
+# Collect all files
+import zipfile
+with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for d in [MODEL_DIR, RESULTS_DIR]:
+        if d.exists():
+            for f in d.rglob('*'):
+                if f.is_file():
+                    zf.write(f, f.relative_to(d.parent))
+                    print(f"  Adding: {f.name}")
+
+size = os.path.getsize(zip_path) / 1024 / 1024
+print(f"\n✓ Created: {zip_path}")
+print(f"✓ Size: {size:.1f} MB")
 ```
 
 ---
 
 # Summary
 
-| Notebook | Task | Output File |
-|----------|------|-------------|
+| Notebook | Task | Output |
+|----------|------|--------|
 | Notebook 1 | Process CaucaFall | `caucafall_processed.zip` |
 | Notebook 2 | Process MCFD | `mcfd_processed.zip` |
 | Notebook 3 | Train Model | `fall_detection_results.zip` |
 
 ---
 
-# Quick Guide
+# Quick Start Guide
 
-1. **Notebook 1**: Run Cells 1-3 → Download `caucafall_processed.zip`
-2. **Notebook 2**: Run Cells 1-3 → Download `mcfd_processed.zip`
-3. **Upload** both zip files to Kaggle (as datasets for Notebook 3)
-4. **Notebook 3**: Run Cells 1-4 → Download `fall_detection_results.zip`
+1. **Notebook 1**: Run Cells 1-4 → Download `caucafall_processed.zip`
+2. **Notebook 2**: Run Cells 1-4 → Download `mcfd_processed.zip`
+3. **Upload** both zip files to Kaggle as datasets
+4. **Notebook 3**: Run Cells 1-6 → Download `fall_detection_results.zip`
 
 ---
 
-# SOTA Hyperparameters Used
+# SOTA Hyperparameters
 
 | Parameter | Value |
 |-----------|-------|
