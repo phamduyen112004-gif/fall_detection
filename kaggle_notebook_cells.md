@@ -839,15 +839,20 @@ else:
     print(f"Dataset: X.shape={X.shape}, y.shape={y.shape}")
     
     from src.hybrid_transformer import HybridFallTransformer
-    from src.config import TRAINING_CONFIG
+    
+    # Must match training config!
+    d_model = 256
+    nhead = 8
+    num_layers = 4
+    dropout = 0.2
     
     model = HybridFallTransformer(
-        input_dim=TRAINING_CONFIG.input_dim,
-        num_frames=TRAINING_CONFIG.num_frames,
-        d_model=TRAINING_CONFIG.d_model,
-        nhead=TRAINING_CONFIG.nhead,
-        num_layers=TRAINING_CONFIG.num_layers,
-        dropout=TRAINING_CONFIG.dropout
+        input_dim=X.shape[2],
+        num_frames=X.shape[1],
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        dropout=dropout
     )
     model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
     model.eval()

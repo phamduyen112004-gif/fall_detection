@@ -231,6 +231,7 @@ class HybridFallTransformer(nn.Module):
         self.transformer_encoder: nn.TransformerEncoder = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers,
+            enable_nested_tensor=False,
         )
 
         # Stage 5: Classification MLP.
