@@ -105,40 +105,40 @@ CONF_THRESHOLD: float = 0.5
 RANDOM_SEED: int = 42
 """Random seed for reproducibility across all operations."""
 
-# --- Architecture Hyperparameters ---
-D_MODEL: int = 256
+# --- Architecture Hyperparameters (optimized for small datasets) ---
+D_MODEL: int = 128
 """Dimension of model embeddings in the hybrid transformer."""
 
 NHEAD: int = 4
 """Number of attention heads in the transformer encoder."""
 
-NUM_LAYERS: int = 3
+NUM_LAYERS: int = 2
 """Number of transformer encoder layers."""
 
-DROPOUT: float = 0.1
+DROPOUT: float = 0.3
 """Dropout probability for regularization."""
 
 # --- Training Hyperparameters ---
-DEFAULT_EPOCHS: int = 100
+DEFAULT_EPOCHS: int = 150
 """Default number of training epochs."""
 
-DEFAULT_BATCH_SIZE: int = 64
+DEFAULT_BATCH_SIZE: int = 16
 """Default batch size for training."""
 
-DEFAULT_LEARNING_RATE: float = 5e-4
-"""Default learning rate (SOTA-preserved value)."""
+DEFAULT_LEARNING_RATE: float = 1e-3
+"""Default learning rate for small datasets."""
 
-WEIGHT_DECAY: float = 1e-5
+WEIGHT_DECAY: float = 5e-4
 """L2 regularization strength."""
 
-EARLY_STOPPING_PATIENCE: int = 25
+EARLY_STOPPING_PATIENCE: int = 30
 """Epochs to wait for improvement before stopping."""
 
-# --- Augmentation Hyperparameters ---
-NOISE_STD: float = 0.01
+# --- Augmentation Hyperparameters (increased for small datasets) ---
+NOISE_STD: float = 0.02
 """Standard deviation for Gaussian noise augmentation."""
 
-MASK_RATIO: float = 0.05
+MASK_RATIO: float = 0.1
 """Ratio of input features to mask during augmentation."""
 
 # --- Dataset Split Ratios ---
