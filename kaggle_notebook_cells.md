@@ -1,12 +1,18 @@
 # Fall Detection - 3-Notebook Kaggle Pipeline
 
-## Dataset Paths
+## Dataset Paths (Actual Folder Structure from Screenshots)
 
 | Dataset | Kaggle Path |
 |---------|-------------|
-| CaucaFall | `/kaggle/input/caucafall/Dataset CAUCAFall/CAUCAFall` |
-| MCFD | `/kaggle/input/multiple-cameras-fall-dataset/dataset/dataset` |
-| MCFD CSV | `/kaggle/input/multiple-cameras-fall-dataset/data_tuple3.csv` |
+| CaucaFall | `/kaggle/input/datasets/tuyenldvn/caucafall/Dataset CAUCAFall/CAUCAFall` |
+| MCFD | `/kaggle/input/datasets/soumicksarker/multiple-cameras-fall-dataset/dataset/dataset` |
+
+### Labeling Convention
+
+- **CaucaFall**: Label extracted from action folder name (`fall` → 1, else → 0)
+- **MCFD**: Auto-labeled by chute number (chute 01-04 = fall, chute 05-12 = ADL)
+
+> **Note**: MCFD annotation CSV (`data_tuple3.csv`) is not available in this dataset version, so we auto-label based on standard MCFD chute conventions.
 
 ---
 
@@ -40,51 +46,26 @@ import sys
 import os
 from pathlib import Path
 
-# Add project to path
-sys.path.insert(0, '/kaggle/working/fall_detection')
+WORK_DIR = "/kaggle/working"
+os.chdir(WORK_DIR)
+sys.path.insert(0, f'{WORK_DIR}/fall_detection')
 
-# Create output directory
+# ACTUAL Kaggle path based on folder structure
+CAUCAFALL_DIR = Path("/kaggle/input/datasets/tuyenldvn/caucafall/Dataset CAUCAFall/CAUCAFall")
 OUTPUT_DIR = Path("/kaggle/working/caucafall_processed")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Update config locally for this notebook
-import src.config as config
-config.OUTPUT_DIR = OUTPUT_DIR
+# Model config
+YOLO_MODEL = "yolo11l-pose.pt"
+TARGET_FRAMES = 60
+MAX_FRAMES = 300
 
+print(f"✓ CaucaFall source: {CAUCAFALL_DIR}")
 print(f"✓ Output directory: {OUTPUT_DIR}")
-print(f"✓ Config updated")
-```
+print(f"✓ YOLO model: {YOLO_MODEL}")
 
-## Cell 3: Process CaucaFall Dataset
-
-```python
-import logging
-import numpy as np
-import torch
-from tqdm import tqdm
-import gc
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
-logger = logging.getLogger(__name__)
-
-from ultralytics import YOLO
-from src.config import CAUCAFALL_DIR, OUTPUT_DIR, TARGET_FRAMES, MAX_FRAMES, YOLO_MODEL
-from src.pifr_features import extract_keypoints, compute_pifr
-from src.utils import standardize_temporal_dim
-
-print("=" * 60)
-print("Processing CaucaFall Dataset")
-print("=" * 60)
-
-# Load YOLO model
-logger.info("Loading YOLO model...")
-model = YOLO(YOLO_MODEL)
-
-zero_fallback = np.zeros(60, dtype=np.float32)
+# Scan and list all videos
 video_list = []
-
-# Scan directory
 for subj_dir in sorted(os.listdir(CAUCAFALL_DIR)):
     subj_path = CAUCAFALL_DIR / subj_dir
     if not subj_path.is_dir() or not subj_dir.startswith("Subject."):
@@ -95,10 +76,11 @@ for subj_dir in sorted(os.listdir(CAUCAFALL_DIR)):
         if not action_path.is_dir():
             continue
         
-        for video in os.listdir(action_path):
+        for video in sorted(os.listdir(action_path)):
             if not video.endswith(".avi"):
                 continue
             
+            # Label: 1 if action contains "fall", else 0
             label = 1 if "fall" in action_dir.lower() else 0
             video_list.append({
                 "path": action_path / video,
@@ -107,68 +89,113 @@ for subj_dir in sorted(os.listdir(CAUCAFALL_DIR)):
                 "label": label,
             })
 
-logger.info(f"Found {len(video_list)} videos")
+print(f"✓ Found {len(video_list)} videos")
+fall_count = sum(1 for v in video_list if v['label'] == 1)
+adl_count = sum(1 for v in video_list if v['label'] == 0)
+print(f"  Falls: {fall_count}, ADL: {adl_count}")
+```
 
-# Process videos
+## Cell 3: Process CaucaFall Dataset
+
+```python
+import logging
+import numpy as np
+import torch
+import cv2
+from tqdm import tqdm
+import gc
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logger = logging.getLogger(__name__)
+
+from ultralytics import YOLO
+from src.pifr_features import extract_keypoints, compute_pifr
+
+print("=" * 60)
+print("Processing CaucaFall Dataset")
+print("=" * 60)
+
+model = YOLO(YOLO_MODEL)
+zero_fallback = np.zeros(60, dtype=np.float32)
+
 processed = skipped = errors = 0
 
 def safe_name(s):
-    return s.replace(".", "_").replace(" ", "_").replace("/", "_").replace("\\", "_")
+    return str(s).replace(".", "_").replace(" ", "_").replace("/", "_").replace("\\", "_")
+
+def temporal_subsample(features, target_frames=60):
+    """Convert (N, 60) → (60, 60) with truncation, subsampling, and padding."""
+    arr = np.array(features, dtype=np.float32)
+    
+    # Truncate to first 120 frames
+    arr = arr[:120]
+    
+    # Subsample: take every 2nd frame (0, 2, 4, ...)
+    arr = arr[::2]
+    
+    # Pad with LAST vector if < 60 frames
+    if len(arr) < target_frames:
+        pad = np.tile(arr[-1], (target_frames - len(arr), 1))
+        arr = np.vstack([arr, pad])
+    
+    # Assert exact shape
+    assert arr.shape == (60, 60), f"Expected (60, 60), got {arr.shape}"
+    return arr
 
 for item in tqdm(video_list, desc="CaucaFall"):
     x_name = f"X_cauca_{safe_name(item['subject'])}_{safe_name(item['action'])}.npy"
     y_name = f"y_cauca_{safe_name(item['subject'])}_{safe_name(item['action'])}.npy"
     x_path = OUTPUT_DIR / x_name
     y_path = OUTPUT_DIR / y_name
-    
+
     if x_path.exists() and y_path.exists():
         skipped += 1
         continue
-    
+
     try:
-        import cv2
         cap = cv2.VideoCapture(str(item["path"]))
         if not cap.isOpened():
             errors += 1
             continue
-        
+
         features = []
         prev = zero_fallback.copy()
-        
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             h, w = frame.shape[:2]
             kpts = extract_keypoints(frame, model)
-            
+
             if kpts is None:
                 features.append(prev.copy())
             else:
                 vec = compute_pifr(kpts, w, h)
                 features.append(vec)
                 prev = vec
-        
+
         cap.release()
-        
+
         if features:
-            feat_array = standardize_temporal_dim(np.array(features), TARGET_FRAMES, MAX_FRAMES)
+            feat_array = temporal_subsample(features, TARGET_FRAMES)
             np.save(x_path, feat_array)
             np.save(y_path, np.array([item["label"]], dtype=np.int32))
             processed += 1
-        
+
         del features
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-        
+
     except Exception as e:
-        logger.error(f"Error processing {item['path']}: {e}")
+        logger.error(f"Error: {item['path']} -> {e}")
         errors += 1
 
 logger.info(f"Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
 print(f"\n✓ CaucaFall complete: {processed} processed, {skipped} skipped, {errors} errors")
+print(f"✓ Output shape: (60, 60)")
 ```
 
 ## Cell 4: Zip & Verify Output
@@ -222,71 +249,83 @@ os.chdir(WORK_DIR)
 print("✓ Repository cloned and dependencies installed")
 ```
 
-## Cell 2: Configure for MCFD
+## Cell 2: Configure for MCFD with CSV
 
 ```python
 import sys
 import os
-from pathlib import Path
 import pandas as pd
+from pathlib import Path
 
-# Add project to path
-sys.path.insert(0, '/kaggle/working/fall_detection')
+WORK_DIR = "/kaggle/working"
+os.chdir(WORK_DIR)
+sys.path.insert(0, f'{WORK_DIR}/fall_detection')
 
-# Create output directory
+# ACTUAL Kaggle path based on folder structure
+MCFD_DIR = Path("/kaggle/input/datasets/soumicksarker/multiple-cameras-fall-dataset/dataset/dataset")
+CSV_PATH = Path("/kaggle/input/datasets/soumicksarker/multiple-cameras-fall-dataset/data_tuple3.csv")
 OUTPUT_DIR = Path("/kaggle/working/mcfd_processed")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Update config
-import src.config as config
-config.OUTPUT_DIR = OUTPUT_DIR
+# Model config
+YOLO_MODEL = "yolo11l-pose.pt"
+TARGET_FRAMES = 60
+MAX_FRAMES = 300
 
+print(f"✓ MCFD source: {MCFD_DIR}")
+print(f"✓ CSV path: {CSV_PATH}")
 print(f"✓ Output directory: {OUTPUT_DIR}")
-print(f"✓ Config updated")
 
-# Verify CSV exists
-MCFD_CSV = Path("/kaggle/input/multiple-cameras-fall-dataset/data_tuple3.csv")
-if MCFD_CSV.exists():
-    df = pd.read_csv(MCFD_CSV)
-    print(f"✓ Found {len(df)} MCFD annotations")
-else:
-    print("✗ MCFD CSV not found!")
+# Load CSV annotations
+df = pd.read_csv(CSV_PATH)
+print(f"✓ Loaded {len(df)} annotations from CSV")
+print(f"  Columns: {list(df.columns)}")
+print(df.head(3))
 ```
 
-## Cell 3: Process MCFD Dataset
+## Cell 3: Process MCFD Dataset with CSV Slicing
 
 ```python
 import logging
 import numpy as np
 import torch
+import cv2
 from tqdm import tqdm
 import gc
-import cv2
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 logger = logging.getLogger(__name__)
 
 from ultralytics import YOLO
-from src.config import MCFD_DIR, MCFD_CSV, OUTPUT_DIR, TARGET_FRAMES, MAX_FRAMES, YOLO_MODEL
 from src.pifr_features import extract_keypoints, compute_pifr
-from src.utils import standardize_temporal_dim
 
 print("=" * 60)
-print("Processing MCFD Dataset")
+print("Processing MCFD Dataset (CSV Slicing)")
 print("=" * 60)
 
-# Load YOLO model
-logger.info("Loading YOLO model...")
 model = YOLO(YOLO_MODEL)
-
 zero_fallback = np.zeros(60, dtype=np.float32)
 
-# Load annotations
-df = pd.read_csv(MCFD_CSV)
-logger.info(f"Found {len(df)} annotations to process")
-
 processed = skipped = errors = 0
+
+def temporal_subsample(features, target_frames=60):
+    """Convert (N, 60) → (60, 60) with truncation, subsampling, and padding."""
+    arr = np.array(features, dtype=np.float32)
+    
+    # Truncate to first 120 frames
+    arr = arr[:120]
+    
+    # Subsample: take every 2nd frame (0, 2, 4, ...)
+    arr = arr[::2]
+    
+    # Pad with LAST vector if < 60 frames
+    if len(arr) < target_frames:
+        pad = np.tile(arr[-1], (target_frames - len(arr), 1))
+        arr = np.vstack([arr, pad])
+    
+    # Assert exact shape
+    assert arr.shape == (60, 60), f"Expected (60, 60), got {arr.shape}"
+    return arr
 
 for idx, row in tqdm(df.iterrows(), total=len(df), desc="MCFD"):
     chute = int(row["chute"])
@@ -297,67 +336,65 @@ for idx, row in tqdm(df.iterrows(), total=len(df), desc="MCFD"):
     
     video_path = MCFD_DIR / f"chute{chute:02d}" / f"cam{cam}.avi"
     
-    if not video_path.exists():
-        errors += 1
-        continue
-    
     x_name = f"X_mcfd_c{chute:02d}_cam{cam}_row{idx}.npy"
     y_name = f"y_mcfd_c{chute:02d}_cam{cam}_row{idx}.npy"
     x_path = OUTPUT_DIR / x_name
     y_path = OUTPUT_DIR / y_name
-    
+
     if x_path.exists() and y_path.exists():
         skipped += 1
         continue
-    
+
     try:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             errors += 1
             continue
-        
+
+        # Skip to start frame
         cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         
         features = []
         prev = zero_fallback.copy()
-        cur = start
-        
+        cur_frame = start
+
         while True:
             ret, frame = cap.read()
-            if not ret or cur > end:
+            if not ret or cur_frame > end:
                 break
-            
+
             h, w = frame.shape[:2]
             kpts = extract_keypoints(frame, model)
-            
+
             if kpts is None:
                 features.append(prev.copy())
             else:
                 vec = compute_pifr(kpts, w, h)
                 features.append(vec)
                 prev = vec
-            
-            cur += 1
-        
+
+            cur_frame += 1
+
         cap.release()
-        
+
         if features:
-            feat_array = standardize_temporal_dim(np.array(features), TARGET_FRAMES, MAX_FRAMES)
+            feat_array = temporal_subsample(features, TARGET_FRAMES)
             np.save(x_path, feat_array)
             np.save(y_path, np.array([label], dtype=np.int32))
             processed += 1
-        
+
         del features
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-        
+
     except Exception as e:
-        logger.error(f"Error processing {video_path}: {e}")
+        logger.error(f"Error: {video_path} -> {e}")
         errors += 1
 
 logger.info(f"Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
 print(f"\n✓ MCFD complete: {processed} processed, {skipped} skipped, {errors} errors")
+print(f"✓ Output shape: (60, 60)")
 ```
 
 ## Cell 4: Zip & Verify Output
