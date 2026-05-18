@@ -1,212 +1,229 @@
-"""Unit tests for GeometricFeatureExtractor (PIFR features)."""
-
-from __future__ import annotations
+"""
+Unit Tests for PIFR Features Module
+====================================
+Tests for keypoint extraction, PIFR computation, and geometric features.
+"""
 
 import numpy as np
 import pytest
 
-
-class TestGeometricFeatureExtractor:
-    """Test suite for GeometricFeatureExtractor."""
-
-    @pytest.fixture
-    def extractor(self):
-        """Create a fresh extractor instance for each test."""
-        from src.pifr_features import GeometricFeatureExtractor
-        return GeometricFeatureExtractor(conf_threshold=0.2, normalize=True)
-
-    @pytest.fixture
-    def standing_pose(self):
-        """Create a standing pose (upright)."""
-        return np.array([
-            [0.50, 0.15, 0.95], [0.48, 0.14, 0.90], [0.52, 0.14, 0.92],
-            [0.47, 0.13, 0.85], [0.53, 0.13, 0.88], [0.40, 0.30, 0.95],
-            [0.60, 0.30, 0.95], [0.35, 0.45, 0.90], [0.65, 0.45, 0.88],
-            [0.32, 0.60, 0.85], [0.68, 0.60, 0.82], [0.43, 0.55, 0.95],
-            [0.57, 0.55, 0.95], [0.44, 0.75, 0.90], [0.56, 0.75, 0.90],
-            [0.43, 0.95, 0.88], [0.57, 0.95, 0.87],
-        ], dtype=np.float64)
-
-    @pytest.fixture
-    def lying_pose(self):
-        """Create a lying/fallen pose (horizontal)."""
-        return np.array([
-            [0.95, 0.30, 0.95], [0.97, 0.32, 0.90], [0.98, 0.28, 0.92],
-            [0.98, 0.30, 0.85], [0.99, 0.34, 0.88], [0.80, 0.35, 0.95],
-            [0.80, 0.45, 0.95], [0.70, 0.30, 0.90], [0.70, 0.50, 0.88],
-            [0.60, 0.28, 0.85], [0.60, 0.52, 0.82], [0.55, 0.32, 0.95],
-            [0.55, 0.48, 0.95], [0.45, 0.30, 0.90], [0.45, 0.50, 0.90],
-            [0.35, 0.32, 0.88], [0.35, 0.48, 0.87],
-        ], dtype=np.float64)
-
-    def test_extract_output_shape(self, extractor, standing_pose):
-        """Feature vector should have shape (60,)."""
-        features = extractor.extract(standing_pose)
-        assert features.shape == (60,)
-
-    def test_extract_standing_pose_low_torso_angle(self, extractor, standing_pose):
-        """Standing pose should have low torso angle."""
-        features = extractor.extract(standing_pose)
-        assert features[54] < 0.3  # torso_angle index
-
-    def test_extract_lying_pose_high_torso_angle(self, extractor, lying_pose):
-        """Lying pose should have high torso angle."""
-        features = extractor.extract(lying_pose)
-        # Lying pose should have significantly higher torso angle than standing
-        assert features[54] > 0.4  # torso_angle index
-
-    def test_extract_batch(self, extractor, standing_pose, lying_pose):
-        """Batch extraction should work correctly."""
-        batch = np.stack([standing_pose, lying_pose], axis=0)
-        features = extractor.extract_batch(batch)
-        assert features.shape == (2, 60)
-
-    def test_invalid_keypoints_shape(self, extractor):
-        """Should raise ValueError for invalid keypoints shape."""
-        with pytest.raises(ValueError, match="Expected keypoints shape"):
-            extractor.extract(np.random.rand(10, 3))
-
-    def test_invalid_batch_shape(self, extractor):
-        """Should raise ValueError for invalid batch shape."""
-        with pytest.raises(ValueError, match="Expected shape"):
-            extractor.extract_batch(np.random.rand(2, 10, 3))
-
-    def test_feature_names_length(self, extractor):
-        """Feature names should have exactly 60 entries."""
-        names = extractor.get_feature_names()
-        assert len(names) == 60
-
-    def test_standing_vs_lying_difference(self, extractor, standing_pose, lying_pose):
-        """Standing and lying poses should produce different torso angles."""
-        feat_standing = extractor.extract(standing_pose)
-        feat_lying = extractor.extract(lying_pose)
-        diff = abs(feat_standing[54] - feat_lying[54])
-        assert diff > 0.3
-
-    def test_no_nan_in_output(self, extractor, standing_pose):
-        """Features should not contain NaN."""
-        features = extractor.extract(standing_pose)
-        assert not np.any(np.isnan(features))
+from src.pifr_features import (
+    COCO_IDX,
+    NOSE,
+    LEFT_SHOULDER,
+    RIGHT_SHOULDER,
+    LEFT_HIP,
+    RIGHT_HIP,
+    LEFT_KNEE,
+    RIGHT_KNEE,
+    LEFT_ANKLE,
+    RIGHT_ANKLE,
+    compute_pifr,
+    compute_9_pifr_features,
+)
 
 
-class TestGeometricFeatureConstants:
-    """Test constants and module-level functions."""
+class TestCOCOIndices:
+    """Test COCO keypoint indices are correct."""
 
-    def test_feature_dim_constant(self):
-        """FEATURE_DIM should be 60."""
-        from src.pifr_features import FEATURE_DIM
-        assert FEATURE_DIM == 60
+    def test_coco_idx_count(self):
+        assert len(COCO_IDX) == 17
 
-    def test_seq_len_constant(self):
-        """SEQ_LEN should be 60."""
-        from src.pifr_features import SEQ_LEN
-        assert SEQ_LEN == 60
-
-    def test_get_default_extractor(self):
-        """Default extractor should return a GeometricFeatureExtractor."""
-        from src.pifr_features import get_default_extractor
-        extractor = get_default_extractor()
-        assert extractor is not None
-
-    def test_extract_pifr_features_function(self):
-        """extract_pifr_features should work as a convenience function."""
-        from src.pifr_features import extract_pifr_features
-        keypoints = np.random.rand(17, 3)
-        features = extract_pifr_features(keypoints)
-        assert features.shape == (60,)
+    def test_key_indices(self):
+        assert COCO_IDX["nose"] == NOSE == 0
+        assert COCO_IDX["left_shoulder"] == LEFT_SHOULDER == 5
+        assert COCO_IDX["right_shoulder"] == RIGHT_SHOULDER == 6
+        assert COCO_IDX["left_hip"] == LEFT_HIP == 11
+        assert COCO_IDX["right_hip"] == RIGHT_HIP == 12
+        assert COCO_IDX["left_knee"] == LEFT_KNEE == 13
+        assert COCO_IDX["right_knee"] == RIGHT_KNEE == 14
+        assert COCO_IDX["left_ankle"] == LEFT_ANKLE == 15
+        assert COCO_IDX["right_ankle"] == RIGHT_ANKLE == 16
 
 
-class TestEdgeCases:
-    """Test edge cases and robustness."""
+class TestComputePIFR:
+    """Test compute_pifr function."""
 
-    def test_extract_output_shape(self):
-        """Test that a dummy (17, 3) keypoint array returns exactly (60,) feature vector.
+    def test_output_shape(self):
+        """PIFR output should be 60 dimensions."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        result = compute_pifr(keypoints, 640, 480)
+        assert result.shape == (60,)
 
-        This is the core contract of the PIFR feature extractor.
-        """
-        from src.pifr_features import GeometricFeatureExtractor
-        extractor = GeometricFeatureExtractor()
+    def test_output_dtype(self):
+        """Output should be float32."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        result = compute_pifr(keypoints, 640, 480)
+        assert result.dtype == np.float32
 
-        # Dummy (17, 3) keypoint array - standard COCO format
-        dummy_keypoints = np.random.rand(17, 3).astype(np.float64)
-        features = extractor.extract(dummy_keypoints)
+    def test_none_keypoints_returns_zeros(self):
+        """None input should return zeros."""
+        result = compute_pifr(None, 640, 480)
+        assert result.shape == (60,)
+        assert np.allclose(result, 0.0)
 
-        # Feature vector MUST be exactly (60,)
-        assert features.shape == (60,), f"Expected (60,), got {features.shape}"
+    def test_short_keypoints_returns_zeros(self):
+        """Keypoints with < 17 points should return zeros."""
+        keypoints = np.random.rand(10, 3).astype(np.float32)
+        result = compute_pifr(keypoints, 640, 480)
+        assert result.shape == (60,)
+        assert np.allclose(result, 0.0)
 
-    def test_invalid_keypoints_all_zeros(self):
-        """Test that all-zero keypoints don't crash the extractor (handles division by zero).
+    def test_keypoints_flattened_in_output(self):
+        """First 51 values should be flattened keypoints."""
+        keypoints = np.zeros((17, 3), dtype=np.float32)
+        keypoints[:, 0] = np.arange(17) / 16  # x values
+        keypoints[:, 1] = np.arange(17, 34) / 32  # y values
+        keypoints[:, 2] = 0.5  # confidence
 
-        The extractor should handle edge cases gracefully without raising exceptions.
-        """
-        from src.pifr_features import GeometricFeatureExtractor, EPS
-        extractor = GeometricFeatureExtractor()
+        result = compute_pifr(keypoints, 1, 1)
 
-        # All zeros keypoints - edge case that could cause division by zero
-        zero_keypoints = np.zeros((17, 3), dtype=np.float64)
-        zero_keypoints[:, 2] = 0.0  # Zero confidence
+        # Check first 51 values (flattened keypoints)
+        expected_flat = keypoints.flatten()
+        np.testing.assert_allclose(result[:51], expected_flat, rtol=1e-5)
 
-        # Should NOT crash - extractor must handle this gracefully
-        try:
-            features = extractor.extract(zero_keypoints)
-            # Even with zero input, should return valid shape
-            assert features.shape == (60,)
-            # Features may contain zeros/NaN but should not raise
-        except (ZeroDivisionError, FloatingPointError):
-            pytest.fail("Extractor crashed on all-zero keypoints (division by zero)")
+    def test_geometric_features_in_output(self):
+        """Last 9 values should be geometric features."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        keypoints[:, 2] = 0.9  # High confidence
+        result = compute_pifr(keypoints, 640, 480)
+        assert len(result) == 60
+        # Last 9 values should be angles and positions
+        geometric = result[51:]
+        assert len(geometric) == 9
 
-    def test_low_confidence_keypoints(self):
-        """Test that low confidence keypoints are handled correctly."""
-        from src.pifr_features import GeometricFeatureExtractor
-        extractor = GeometricFeatureExtractor()
 
-        # Keypoints with very low confidence
-        keypoints = np.random.rand(17, 3).astype(np.float64)
-        keypoints[:, 2] = 0.05  # All low confidence
+class TestCompute9PIFRFeatures:
+    """Test compute_9_pifr_features function."""
 
-        features = extractor.extract(keypoints)
-        assert features.shape == (60,)
-        # Should not crash
+    def test_output_shape(self):
+        """Should output exactly 9 features."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        result = compute_9_pifr_features(keypoints)
+        assert result.shape == (9,)
 
-    def test_partial_valid_keypoints(self):
-        """Test extraction with some valid and some invalid keypoints."""
-        from src.pifr_features import GeometricFeatureExtractor
-        extractor = GeometricFeatureExtractor()
+    def test_output_dtype(self):
+        """Output should be float32."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        result = compute_9_pifr_features(keypoints)
+        assert result.dtype == np.float32
 
-        # Mix of valid and invalid keypoints
-        keypoints = np.random.rand(17, 3).astype(np.float64)
-        keypoints[:5, 2] = 0.0  # First 5 invalid (low confidence)
-        keypoints[5:, 2] = 0.9  # Rest valid
+    def test_none_keypoints_returns_zeros(self):
+        """None input should return zeros."""
+        result = compute_9_pifr_features(None)
+        assert result.shape == (9,)
+        assert np.allclose(result, 0.0)
 
-        features = extractor.extract(keypoints)
-        assert features.shape == (60,)
+    def test_short_keypoints_returns_zeros(self):
+        """Keypoints with < 17 points should return zeros."""
+        keypoints = np.random.rand(5, 3).astype(np.float32)
+        result = compute_9_pifr_features(keypoints)
+        assert result.shape == (9,)
+        assert np.allclose(result, 0.0)
 
-    def test_frame_to_vector_60(self):
-        """Test frame_to_vector_60 utility function."""
-        from src.pifr_features import frame_to_vector_60
-        import numpy as np
+    def test_center_of_mass_x_bounded(self):
+        """Center of mass X should be in [0, 1] for normalized keypoints."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        keypoints[:, 2] = 0.5  # Equal weights
+        result = compute_9_pifr_features(keypoints)
+        assert 0 <= result[0] <= 1
 
-        keypoints = np.random.rand(17, 3).astype(np.float64)
-        vec = frame_to_vector_60(keypoints)
+    def test_center_of_mass_y_bounded(self):
+        """Center of mass Y should be in [0, 1] for normalized keypoints."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        keypoints[:, 2] = 0.5
+        result = compute_9_pifr_features(keypoints)
+        assert 0 <= result[1] <= 1
 
-        assert vec.shape == (60,), f"Expected (60,), got {vec.shape}"
+    def test_angles_in_valid_range(self):
+        """All angle features should be in [0, pi]."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        keypoints[:, 2] = 0.9
+        result = compute_9_pifr_features(keypoints)
 
-    def test_resample_to_length(self):
-        """Test resample_to_length utility function."""
-        from src.pifr_features import resample_to_length
-        import numpy as np
+        # Angles are at indices 2-8 (7 angles + 2 center of mass)
+        angles = result[2:]
+        assert np.all(angles >= 0)
+        assert np.all(angles <= np.pi)
 
-        # Test upsampling
-        seq_short = np.random.rand(30, 60)
-        resampled = resample_to_length(seq_short, 60)
-        assert resampled.shape == (60, 60)
+    def test_upright_pose_vertical_torso(self):
+        """Standing pose should have vertical torso angle."""
+        keypoints = np.zeros((17, 3), dtype=np.float32)
+        # Standing person: head at top, feet at bottom
+        keypoints[NOSE] = [0.5, 0.1, 1.0]
+        keypoints[LEFT_SHOULDER] = [0.45, 0.25, 1.0]
+        keypoints[RIGHT_SHOULDER] = [0.55, 0.25, 1.0]
+        keypoints[LEFT_HIP] = [0.45, 0.5, 1.0]
+        keypoints[RIGHT_HIP] = [0.55, 0.5, 1.0]
+        keypoints[LEFT_KNEE] = [0.45, 0.7, 1.0]
+        keypoints[RIGHT_KNEE] = [0.55, 0.7, 1.0]
+        keypoints[LEFT_ANKLE] = [0.45, 0.95, 1.0]
+        keypoints[RIGHT_ANKLE] = [0.55, 0.95, 1.0]
 
-        # Test downsampling
-        seq_long = np.random.rand(120, 60)
-        resampled = resample_to_length(seq_long, 60)
-        assert resampled.shape == (60, 60)
+        result = compute_9_pifr_features(keypoints)
 
-        # Test exact length (no change)
-        seq_exact = np.random.rand(60, 60)
-        resampled = resample_to_length(seq_exact, 60)
-        assert resampled.shape == (60, 60)
+        # Torso angle (index 3) should be close to 0 (upright)
+        assert result[3] < 0.3  # Nearly vertical
+
+    def test_lying_pose_horizontal_torso(self):
+        """Lying pose should have horizontal torso angle."""
+        keypoints = np.zeros((17, 3), dtype=np.float32)
+        # Lying person: horizontal body
+        keypoints[NOSE] = [0.1, 0.5, 1.0]
+        keypoints[LEFT_SHOULDER] = [0.25, 0.5, 1.0]
+        keypoints[RIGHT_SHOULDER] = [0.25, 0.5, 1.0]
+        keypoints[LEFT_HIP] = [0.75, 0.5, 1.0]
+        keypoints[RIGHT_HIP] = [0.75, 0.5, 1.0]
+        keypoints[LEFT_KNEE] = [0.85, 0.5, 1.0]
+        keypoints[RIGHT_KNEE] = [0.85, 0.5, 1.0]
+        keypoints[LEFT_ANKLE] = [0.95, 0.5, 1.0]
+        keypoints[RIGHT_ANKLE] = [0.95, 0.5, 1.0]
+
+        result = compute_9_pifr_features(keypoints)
+
+        # Torso angle (index 3) should be close to pi/2 (horizontal)
+        assert result[3] > 1.2  # Nearly horizontal
+
+    def test_confidence_weighting(self):
+        """Features should weight by confidence."""
+        # High confidence on left side
+        keypoints = np.ones((17, 3), dtype=np.float32) * 0.5
+        keypoints[:8, 2] = 1.0  # High confidence for left body
+        keypoints[8:, 2] = 0.1  # Low confidence for right body
+
+        result = compute_9_pifr_features(keypoints)
+
+        # Center of mass should shift toward left
+        assert result[0] < 0.5  # Shifted left
+
+    def test_zero_confidence_handled(self):
+        """Zero confidence should not cause division by zero."""
+        keypoints = np.zeros((17, 3), dtype=np.float32)
+        keypoints[:, 0] = np.linspace(0, 1, 17)  # x values
+        keypoints[:, 1] = np.linspace(0, 1, 17)  # y values
+        # All zero confidence
+
+        result = compute_9_pifr_features(keypoints)
+
+        # Should not crash and return valid output
+        assert result.shape == (9,)
+        assert not np.any(np.isnan(result))
+        assert not np.any(np.isinf(result))
+
+
+class TestPIFRConsistency:
+    """Test consistency between compute_pifr and compute_9_pifr_features."""
+
+    def test_geometric_features_match(self):
+        """Geometric features in compute_pifr should match compute_9_pifr_features."""
+        keypoints = np.random.rand(17, 3).astype(np.float32)
+        keypoints[:, 2] = 0.8
+
+        pifr_full = compute_pifr(keypoints, 640, 480)
+        pifr_9d = compute_9_pifr_features(keypoints)
+
+        np.testing.assert_allclose(pifr_full[51:], pifr_9d, rtol=1e-5)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

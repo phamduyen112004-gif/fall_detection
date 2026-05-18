@@ -28,7 +28,7 @@ def load_model(weights_path: str | Path) -> HybridFallTransformer:
     if not weights_path.exists():
         raise FileNotFoundError(f"Weights file not found: {weights_path}")
 
-    checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(weights_path, map_location="cpu", weights_only=True)
 
     # Try to extract model state dict (handle potential checkpoint formats)
     state_dict = None

@@ -1,191 +1,126 @@
-"""Unit tests for HybridFallTransformer model."""
+"""
+Unit tests for HybridFallTransformer model.
+"""
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
 import torch
+import pytest
+
+from src.hybrid_transformer import HybridFallTransformer, FallDetectionModel
 
 
 class TestHybridFallTransformer:
-    """Test suite for HybridFallTransformer model."""
+    """Test suite for HybridFallTransformer."""
 
     @pytest.fixture
-    def model(self):
-        """Create a fresh model instance."""
-        from src.hybrid_fall_transformer import HybridFallTransformer
-        return HybridFallTransformer()
+    def batch_size(self) -> int:
+        return 2
 
     @pytest.fixture
-    def sample_input(self):
-        """Create a sample input tensor (batch_size=2, seq_len=60, feature_dim=60)."""
-        return torch.randn(2, 60, 60)
+    def num_frames(self) -> int:
+        return 60
 
     @pytest.fixture
-    def sample_sequence(self):
-        """Create a sample sequence as numpy array."""
-        return np.random.rand(60, 60).astype(np.float32)
+    def input_dim(self) -> int:
+        return 60
 
-    def test_model_forward_shape(self, model, sample_input):
-        """Model forward pass should output correct shape."""
-        output = model(sample_input)
-        assert output.shape == (2, 1), f"Expected shape (2, 1), got {output.shape}"
+    @pytest.fixture
+    def model(self, input_dim: int, num_frames: int) -> HybridFallTransformer:
+        """Create a model instance with default SOTA hyperparameters."""
+        return HybridFallTransformer(
+            input_dim=input_dim,
+            num_frames=num_frames,
+            d_model=256,
+            nhead=4,
+            num_layers=3,
+            dropout=0.1,
+        )
 
-    def test_model_output_is_logits(self, model, sample_input):
-        """Model output should be raw logits (no sigmoid applied)."""
-        output = model(sample_input)
-        # Logits can be any real number, not constrained to [0, 1]
-        assert isinstance(output, torch.Tensor)
-        assert output.numel() == 2  # batch size
+    @pytest.fixture
+    def dummy_input(self, batch_size: int, num_frames: int, input_dim: int) -> torch.Tensor:
+        """Create mock input tensor of shape (2, 60, 60)."""
+        return torch.randn(batch_size, num_frames, input_dim)
 
-    def test_model_eval_mode(self, model):
-        """Model should work in eval mode."""
-        model.eval()
-        with torch.no_grad():
-            x = torch.randn(4, 60, 60)
+    def test_forward_pass_returns_correct_shape(
+        self,
+        model: HybridFallTransformer,
+        dummy_input: torch.Tensor,
+        batch_size: int,
+    ) -> None:
+        """Assert output shape is (batch_size, 1)."""
+        output = model(dummy_input)
+        assert output.shape == (batch_size, 1)
+
+    def test_forward_pass_accepts_different_batch_sizes(
+        self,
+        model: HybridFallTransformer,
+        num_frames: int,
+        input_dim: int,
+    ) -> None:
+        """Model should handle various batch sizes."""
+        for batch_size in [1, 4, 16]:
+            x = torch.randn(batch_size, num_frames, input_dim)
             output = model(x)
-            assert output.shape == (4, 1)
+            assert output.shape == (batch_size, 1)
 
-    def test_model_train_mode(self, model):
-        """Model should work in train mode."""
-        model.train()
-        x = torch.randn(4, 60, 60)
-        output = model(x)
-        assert output.shape == (4, 1)
+    def test_model_with_custom_d_model(
+        self,
+        batch_size: int,
+        num_frames: int,
+        input_dim: int,
+    ) -> None:
+        """Model should work with custom d_model values."""
+        for d_model in [128, 256, 512]:
+            model = HybridFallTransformer(d_model=d_model)
+            x = torch.randn(batch_size, num_frames, input_dim)
+            output = model(x)
+            assert output.shape == (batch_size, 1)
 
-    def test_model_single_sample(self, model):
-        """Model should accept single sample input."""
-        x = torch.randn(1, 60, 60)
-        output = model(x)
-        assert output.shape == (1, 1)
-
-    def test_model_predict_method(self, model, sample_sequence):
-        """predict() method should work with numpy input."""
-        prediction = model.predict(sample_sequence)
-        # predict() returns tensor of shape (1, 1) for single sample
-        assert isinstance(prediction, torch.Tensor)
-        assert prediction.shape[-1] == 1  # Last dim should be 1
-
-    def test_model_predict_batch(self, model):
-        """predict() method should work with batch numpy input."""
-        batch = np.random.rand(8, 60, 60).astype(np.float32)
-        predictions = model.predict(batch)
-        assert predictions.shape == (8, 1)
-
-    def test_model_predict_probs(self, model, sample_sequence):
-        """predict() with return_probs=True should return probability."""
-        prob = model.predict(sample_sequence, return_probs=True)
-        # Check all values are in [0, 1] range
-        assert torch.all(prob >= 0.0) and torch.all(prob <= 1.0)
-
-    def test_model_deterministic(self, model):
-        """Model should produce same output with same input (eval mode)."""
-        model.eval()
-        x = torch.randn(4, 60, 60)
-        with torch.no_grad():
-            out1 = model(x)
-            out2 = model(x)
-            torch.testing.assert_close(out1, out2)
-
-    def test_model_large_batch(self, model):
-        """Model should handle large batches."""
-        large_batch = torch.randn(128, 60, 60)
-        output = model(large_batch)
-        assert output.shape == (128, 1)
-
-    def test_model_gradient_flow(self, model):
-        """Model should support backpropagation."""
-        model.train()
-        x = torch.randn(4, 60, 60, requires_grad=True)
-        output = model(x)
-        loss = output.mean()
+    def test_model_is_trainable(
+        self,
+        model: HybridFallTransformer,
+        dummy_input: torch.Tensor,
+    ) -> None:
+        """Model should compute gradients during backprop."""
+        output = model(dummy_input)
+        loss = output.sum()
         loss.backward()
+        for name, param in model.named_parameters():
+            assert param.grad is not None, f"No gradient for {name}"
 
-        # Check that gradients exist for model parameters
-        has_grad = any(p.grad is not None for p in model.parameters() if p.requires_grad)
-        assert has_grad or x.grad is not None, "No gradients computed"
-
-    def test_model_no_nan_output(self, model):
-        """Model output should not contain NaN."""
-        model.eval()
-        x = torch.randn(16, 60, 60)
-        with torch.no_grad():
-            output = model(x)
-            assert not torch.isnan(output).any(), "Model output contains NaN"
-            assert not torch.isinf(output).any(), "Model output contains Inf"
-
-    def test_model_zero_input(self, model):
-        """Model should handle zero input."""
-        model.eval()
-        x = torch.zeros(2, 60, 60)
-        with torch.no_grad():
-            output = model(x)
-            assert output.shape == (2, 1)
-            assert not torch.isnan(output).any()
-
-    def test_model_large_input_values(self, model):
-        """Model should handle large input values."""
-        model.eval()
-        x = torch.randn(2, 60, 60) * 10  # Large values
-        with torch.no_grad():
-            output = model(x)
-            assert output.shape == (2, 1)
-            assert not torch.isnan(output).any()
+    def test_model_has_expected_parameter_count(
+        self,
+        model: HybridFallTransformer,
+    ) -> None:
+        """Model should have a reasonable number of parameters."""
+        num_params = sum(p.numel() for p in model.parameters())
+        assert num_params > 100_000, "Model should have substantial parameters"
+        assert num_params < 10_000_000, "Model should not be excessively large"
 
 
-class TestSinusoidalPositionalEncoding:
-    """Test suite for SinusoidalPositionalEncoding."""
+class TestFallDetectionModel:
+    """Test suite for FallDetectionModel wrapper."""
 
-    def test_pe_shape(self):
-        """PE output should have correct shape."""
-        from src.hybrid_fall_transformer import SinusoidalPositionalEncoding
-
-        pe = SinusoidalPositionalEncoding(d_model=256, max_len=100)
-        x = torch.randn(4, 100, 256)
-        out = pe(x)
-        assert out.shape == x.shape
-
-    def test_pe_preserves_shape(self):
-        """PE should not change sequence length or batch size."""
-        from src.hybrid_fall_transformer import SinusoidalPositionalEncoding
-
-        pe = SinusoidalPositionalEncoding(d_model=128, max_len=50)
-        batch_size, seq_len = 3, 50
-        x = torch.randn(batch_size, seq_len, 128)
-        out = pe(x)
-        assert out.shape == (batch_size, seq_len, 128)
-
-    def test_pe_deterministic(self):
-        """PE should produce same output for same input."""
-        from src.hybrid_fall_transformer import SinusoidalPositionalEncoding
-
-        pe = SinusoidalPositionalEncoding(d_model=64, max_len=30)
-        x = torch.randn(2, 30, 64)
-
-        with torch.no_grad():
-            out1 = pe(x)
-            out2 = pe(x)
-            torch.testing.assert_close(out1, out2)
-
-
-class TestModelLoading:
-    """Test model weight loading."""
-
-    def test_load_from_checkpoint(self):
-        """Model should load from checkpoint dict."""
-        from src.hybrid_fall_transformer import HybridFallTransformer
-
-        model = HybridFallTransformer()
-        checkpoint = model.state_dict()
-
-        model2 = HybridFallTransformer()
-        model2.load_state_dict(checkpoint)
-
-        # Models should produce identical outputs
-        model.eval()
-        model2.eval()
+    def test_forward_pass_returns_correct_shape(self) -> None:
+        """FallDetectionModel should wrap HybridFallTransformer correctly."""
+        model = FallDetectionModel(
+            input_dim=60,
+            num_frames=60,
+            d_model=256,
+            nhead=4,
+            num_layers=3,
+            dropout=0.1,
+        )
         x = torch.randn(2, 60, 60)
-        with torch.no_grad():
-            out1 = model(x)
-            out2 = model2(x)
-            torch.testing.assert_close(out1, out2)
+        output = model(x)
+        assert output.shape == (2, 1)
+
+    def test_backward_pass_computes_gradients(self) -> None:
+        """Wrapper should support gradient computation."""
+        model = FallDetectionModel()
+        x = torch.randn(2, 60, 60)
+        output = model(x)
+        loss = output.sum()
+        loss.backward()
+        assert model.model.classifier[0].weight.grad is not None

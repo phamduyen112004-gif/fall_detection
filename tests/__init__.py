@@ -1,1 +1,1 @@
-# Fall Detection Tests
+"""Tests for fall-detection project."""

@@ -1,37 +1,47 @@
-"""Các dataclass dùng chung trong pipeline."""
-
-from __future__ import annotations
+"""
+Type Definitions for Fall Detection
+"""
 
 from dataclasses import dataclass
+from typing import Optional
+import numpy as np
 
 
 @dataclass
 class FrameDiag:
-    """
-    Thông tin chẩn đoán cho mỗi frame.
+    """Diagnostic information for a single frame."""
+    frame_idx: int
+    keypoints: Optional[np.ndarray] = None
+    box: Optional[np.ndarray] = None
+    confidence: float = 0.0
+    valid: bool = False
+    vec60: Optional[np.ndarray] = None
+    
+    # Posture features
+    torso_angle_deg: float = 0.0
+    bbox_aspect_ratio: float = 0.0
+    bottom_ratio: float = 0.0
+    
+    # Tracking
+    center_x: float = 0.0
+    center_y: float = 0.0
 
-    Thuộc tính:
-        mean_kpt_conf: Độ tin cậy trung bình của các keypoints (0-1).
-        torso_deg: Góc thân (torso) so với trục dọc, tính bằng độ.
-        nose_ankle_deg: Góc mũi-mắt cá chân so với trục dọc, tính bằng độ.
-        posture: Tư thế hiện tại ('normal' hoặc 'laydown').
-        fall_confirmed: True nếu sự kiện ngã đã được xác nhận.
-        fall_prob: Xác suất ngã từ Transformer (None nếu dùng heuristic).
-    """
-    mean_kpt_conf: float | None
-    torso_deg: float | None
-    nose_ankle_deg: float | None
-    posture: str
-    fall_confirmed: bool
-    fall_prob: float | None = None
 
-    def __str__(self) -> str:
-        conf_str = f"{self.mean_kpt_conf:.3f}" if self.mean_kpt_conf is not None else "—"
-        torso_str = f"{self.torso_deg:.1f}°" if self.torso_deg is not None else "—"
-        ankle_str = f"{self.nose_ankle_deg:.1f}°" if self.nose_ankle_deg is not None else "—"
-        prob_str = f" p={self.fall_prob:.3f}" if self.fall_prob is not None else ""
-        return (
-            f"FrameDiag(posture={self.posture}, conf={conf_str}, "
-            f"torso={torso_str}, nose_ankle={ankle_str}, "
-            f"fall={self.fall_confirmed}{prob_str})"
-        )
+@dataclass  
+class InferenceResult:
+    """Result of fall detection inference."""
+    frame_idx: int
+    prob_fall: float
+    is_fall: bool
+    confidence_grade: str  # 'low', 'medium', 'high'
+    posture_features: Optional[dict] = None
+
+
+@dataclass
+class AlertInfo:
+    """Alert information for fall detection."""
+    timestamp: float
+    probability: float
+    frame_snapshot: Optional[np.ndarray] = None
+    alert_sent: bool = False
+    telegram_message_id: Optional[str] = None

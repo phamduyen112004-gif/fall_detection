@@ -34,7 +34,7 @@ def convert_to_onnx(model_path: str, output_path: str, seq_len: int = 60, featur
 
     # Load weights nếu có checkpoint
     if model_path.endswith('.pth'):
-        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
         if 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
         else:

@@ -1,909 +1,503 @@
-#!/usr/bin/env python3
 """
-Pose-Informed Fall Recognition (PIFR) Module.
+PIFR (Pose-based Image Feature Representation) Features Module
 
-Geometric Feature Extraction from COCO 17-Keypoint Data.
-
-Tác giả: Fall Detection Team
-Ngày: May 2026
-
-Mô tả:
-    Module trích xuất 9 đặc trưng hình học từ 17 COCO keypoints
-    và kết hợp với flattened keypoints để tạo vector đặc trưng 60 chiều.
-
-COCO Keypoint Indices:
-    0:  NOSE,       1:  L_EYE,      2:  R_EYE,      3:  L_EAR,  4:  R_EAR
-    5:  L_SHOULDER, 6:  R_SHOULDER, 7:  L_ELBOW,     8:  R_ELBOW,
-    9:  L_WRIST,    10: R_WRIST,    11: L_HIP,       12: R_HIP,
-    13: L_KNEE,    14: R_KNEE,     15: L_ANKLE,     16: R_ANKLE
-
-Đặc trưng hình học (9 chiều):
-    [0] center_mass_x       - Trọng tâm X của các keypoints hợp lệ
-    [1] center_mass_y       - Trọng tâm Y của các keypoints hợp lệ
-    [2] shoulder_nose_angle - Góc vai-mũi (B-A và B-C)
-    [3] torso_angle         - Góc thân so với trục dọc
-    [4] hip_angle           - Góc hông so với trục ngang
-    [5] shoulder_angle      - Góc vai so với trục ngang
-    [6] left_leg_angle      - Góc chân trái (đầu gối)
-    [7] right_leg_angle    - Góc chân phải (đầu gối)
-    [8] nose_to_ankle_angle - Góc mũi-mắt cá chân so với trục dọc
-
-Vector đặc trưng đầu ra (60 chiều):
-    [0:51]   - 17 keypoints × 3 (x, y, conf) = 51 chiều
-    [51:60]  - 9 geometric features
-
-Sử dụng:
-    >>> from pifr_features import GeometricFeatureExtractor
-    >>> extractor = GeometricFeatureExtractor()
-    >>> keypoints = np.random.rand(17, 3)  # shape: (17, 3)
-    >>> features = extractor.extract(keypoints)  # shape: (60,)
+Extracts geometric features from human pose keypoints for fall detection.
+Implements the full PIFR feature pipeline: 51D COCO keypoints + 9D geometric
+angles = 60D total feature vector per frame.
 """
 
 from __future__ import annotations
 
+import logging
+from typing import Any, TypeAlias
+
+import cv2
 import numpy as np
-from numpy.typing import NDArray
 
-# Constants
-SEQ_LEN = 60      # Number of frames in sequence
-FEATURE_DIM = 60  # Feature dimension (51 keypoints + 9 geometric)
+# Type aliases for readability
+Frame: TypeAlias = np.ndarray
+Keypoints: TypeAlias = np.ndarray
+YOLOModel: TypeAlias = Any
+RGBColor: TypeAlias = tuple[int, int, int]
+
+# ============================================================
+# MAGIC NUMBER CONSTANTS — Academic Justification
+# ============================================================
+
+# Model confidence threshold for YOLO keypoint extraction.
+# Set to 0.5 per COCO evaluation protocol — balances precision/recall
+# for person keypoint detection in indoor fall scenarios.
+YOLO_CONF_THRESHOLD: float = 0.5
+
+# Minimum confidence per individual keypoint for skeleton rendering.
+# Suppresses noisy keypoints from YOLO's low-confidence predictions.
+KEYPOINT_VISUALIZATION_CONF: float = 0.3
+
+# Epsilon value to prevent division-by-zero when computing confidence-
+# weighted center-of-mass (F1, F2). A value of 1e-8 is chosen as it is
+# below the float32 numerical precision floor (~1e-7) for single additions,
+# ensuring safe addition without altering the original sum meaningfully.
+EPSILON: float = 1e-8
+
+# Number of COCO keypoints extracted by YOLOv11-Pose.
+# Standard 17-keypoint body model: nose, eyes, ears, shoulders, elbows,
+# wrists, hips, knees, ankles.
+NUM_COCO_KEYPOINTS: int = 17
+
+# Total PIFR feature dimension: 51D (17 COCO keypoints × 3 channels [x,y,conf])
+# + 9D geometric features = 60D per frame.
+TOTAL_PIFR_DIM: int = 60
+
+# Dimensionality of the geometric feature sub-vector (F1-F9).
+GEOMETRIC_DIM: int = 9
+
+# ============================================================
+# COCO KEYPOINT INDEX MAPPING
+# ============================================================
+
+COCO_IDX: dict[str, int] = {
+    "nose": 0,
+    "left_eye": 1,
+    "right_eye": 2,
+    "left_ear": 3,
+    "right_ear": 4,
+    "left_shoulder": 5,
+    "right_shoulder": 6,
+    "left_elbow": 7,
+    "right_elbow": 8,
+    "left_wrist": 9,
+    "right_wrist": 10,
+    "left_hip": 11,
+    "right_hip": 12,
+    "left_knee": 13,
+    "right_knee": 14,
+    "left_ankle": 15,
+    "right_ankle": 16,
+}
+
+# Human-readable aliases — used throughout angle computations.
+NOSE: int = 0
+LEFT_SHOULDER: int = 5
+RIGHT_SHOULDER: int = 6
+LEFT_HIP: int = 11
+RIGHT_HIP: int = 12
+LEFT_KNEE: int = 13
+RIGHT_KNEE: int = 14
+LEFT_ANKLE: int = 15
+RIGHT_ANKLE: int = 16
+
+# ============================================================
+# LOGGER
+# ============================================================
+
+_logger: logging.Logger = logging.getLogger(__name__)
 
 
-class GeometricFeatureExtractor:
+# ============================================================
+# KEYPOINT EXTRACTION
+# ============================================================
+
+def extract_keypoints(
+    frame: Frame,
+    yolo_model: YOLOModel,
+    fps: float = 30.0,
+) -> Keypoints | None:
     """
-    Pose-Informed Fall Recognition (PIFR) Geometric Feature Extractor.
+    Extract 17 COCO keypoints from a single frame using YOLOv11-Pose.
 
-    Trích xuất 9 đặc trưng hình học từ 17 COCO keypoints và kết hợp
-    với flattened keypoints để tạo vector đặc trưng 60 chiều.
+    The YOLO model processes the frame in BGR format (OpenCV native).
+    Keypoints are returned in normalized [0, 1] xy coordinates plus
+    per-keypoint confidence scores.
 
-    Thuộc tính:
-        CONF_THRESHOLD (float): Ngưỡng confidence tối thiểu cho keypoint hợp lệ.
-        EPS (float): Giá trị epsilon để tránh chia cho zero.
-        FEATURE_DIM (int): Số chiều vector đặc trưng (60).
-        KEYPOINT_NAMES (list): Tên các keypoints theo chỉ mục COCO.
+    Args:
+        frame: BGR image from OpenCV (shape: H × W × 3).
+        yolo_model: Loaded YOLO model from ultralytics library.
+        fps: Video FPS — unused in this implementation, kept for API
+             compatibility with the broader pipeline.
 
-    Ví dụ:
-        >>> extractor = GeometricFeatureExtractor(conf_threshold=0.2)
-        >>> keypoints = np.random.rand(17, 3)
-        >>> features = extractor.extract(keypoints)
-        >>> print(features.shape)
-        (60,)
+    Returns:
+        Keypoints array of shape (17, 3) with [x, y, confidence],
+        all normalized to [0, 1] range. Returns None if no person is
+        detected or if keypoint extraction fails.
     """
+    try:
+        # Run YOLO inference with verbose suppression for clean logs.
+        # conf=0.5 filters out low-confidence person detections.
+        results = yolo_model(frame, verbose=False, conf=YOLO_CONF_THRESHOLD)
 
-    # COCO 17 Keypoint Indices
-    NOSE = 0
-    L_EYE = 1
-    R_EYE = 2
-    L_EAR = 3
-    R_EAR = 4
-    L_SHOULDER = 5
-    R_SHOULDER = 6
-    L_ELBOW = 7
-    R_ELBOW = 8
-    L_WRIST = 9
-    R_WRIST = 10
-    L_HIP = 11
-    R_HIP = 12
-    L_KNEE = 13
-    R_KNEE = 14
-    L_ANKLE = 15
-    R_ANKLE = 16
+        if not results or len(results) == 0:
+            _logger.debug("YOLO returned no results for this frame.")
+            return None
 
-    KEYPOINT_NAMES = [
-        "nose", "l_eye", "r_eye", "l_ear", "r_ear",
-        "l_shoulder", "r_shoulder", "l_elbow", "r_elbow",
-        "l_wrist", "r_wrist", "l_hip", "r_hip",
-        "l_knee", "r_knee", "l_ankle", "r_ankle",
-    ]
+        result = results[0]
 
-    def __init__(
-        self,
-        conf_threshold: float = 0.2,
-        eps: float = 1e-6,
-        normalize: bool = True,
-    ) -> None:
-        """
-        Khởi tạo GeometricFeatureExtractor.
+        if result.keypoints is None:
+            _logger.debug("YOLO result contains no keypoint data.")
+            return None
 
-        Args:
-            conf_threshold: Ngưỡng confidence tối thiểu cho keypoint hợp lệ.
-                           Mặc định: 0.2.
-            eps: Giá trị epsilon để tránh chia cho zero.
-                 Mặc định: 1e-6.
-            normalize: Nếu True, chuẩn hóa Min-Max các đặc trưng góc về [0, 1].
-                       Mặc định: True.
+        # Access normalized xy coordinates (xyn) and confidence scores separately.
+        # xyn[0] returns the first detected person's keypoints.
+        if len(result.keypoints.xyn) == 0:
+            _logger.debug("YOLO keypoints.xyn is empty.")
+            return None
 
-        Ví dụ:
-            >>> extractor = GeometricFeatureExtractor(conf_threshold=0.3, normalize=False)
-        """
-        self.conf_threshold = conf_threshold
-        self.eps = eps
-        self.normalize = normalize
+        keypoints_xy: np.ndarray = result.keypoints.xyn[0].cpu().numpy()
+        keypoints_conf: np.ndarray = result.keypoints.conf[0].cpu().numpy()
 
-        # Min-Max values cho các góc (để normalize về [0, 1])
-        # Góc có thể dao động từ 0 đến π (180 độ)
-        self._angle_min = 0.0
-        self._angle_max = np.pi
-
-    def _is_valid_keypoint(self, kp: NDArray[np.float64]) -> bool:
-        """
-        Kiểm tra xem một keypoint có hợp lệ không.
-
-        Args:
-            kp: Array shape (3,) chứa [x, y, confidence].
-
-        Returns:
-            True nếu confidence >= conf_threshold, ngược lại False.
-        """
-        return len(kp) >= 3 and kp[2] >= self.conf_threshold
-
-    def _get_valid_mask(self, keypoints: NDArray[np.float64]) -> NDArray[np.bool_]:
-        """
-        Tạo mask cho các keypoints hợp lệ.
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Boolean mask shape (17,) với True cho keypoints hợp lệ.
-        """
-        if keypoints.shape[0] != 17:
-            raise ValueError(
-                f"Expected 17 keypoints, got {keypoints.shape[0]}. "
-                f"Input shape must be (17, 3)."
+        # Reject incomplete detections — must have all 17 COCO keypoints.
+        if keypoints_xy.shape[0] < NUM_COCO_KEYPOINTS:
+            _logger.debug(
+                f"Incomplete keypoint detection: {keypoints_xy.shape[0]} "
+                f"detected, expected {NUM_COCO_KEYPOINTS}."
             )
-        confidence = keypoints[:, 2]
-        return confidence >= self.conf_threshold
-
-    def _safe_normalize(self, v: NDArray[np.float64]) -> float:
-        """
-        Chuẩn hóa vector về đơn vị.
-
-        Args:
-            v: Vector có thể là zero vector.
-
-        Returns:
-            Vector đã chuẩn hóa, hoặc zero vector nếu norm < eps.
-        """
-        norm = np.linalg.norm(v)
-        if norm < self.eps:
-            return np.zeros_like(v)
-        return v / norm
-
-    def _angle_between_vectors(
-        self,
-        v1: NDArray[np.float64],
-        v2: NDArray[np.float64],
-    ) -> float:
-        """
-        Tính góc giữa hai vector sử dụng dot product.
-
-        Args:
-            v1: Vector thứ nhất (2D hoặc 3D).
-            v2: Vector thứ hai (2D hoặc 3D).
-
-        Returns:
-            Góc trong radians, nằm trong [0, π].
-            Trả về 0.0 nếu một trong hai vector có norm < eps.
-        """
-        norm1 = np.linalg.norm(v1)
-        norm2 = np.linalg.norm(v2)
-
-        if norm1 < self.eps or norm2 < self.eps:
-            return 0.0
-
-        cos_angle = np.dot(v1, v2) / (norm1 * norm2)
-        # Clamp để tránh lỗi floating point
-        cos_angle = np.clip(cos_angle, -1.0, 1.0)
-        return np.arccos(cos_angle)
-
-    def _normalize_angle(self, angle: float) -> float:
-        """
-        Chuẩn hóa góc về [0, 1] nếu normalize=True.
-
-        Args:
-            angle: Góc trong radians.
-
-        Returns:
-            Góc đã chuẩn hóa hoặc góc gốc.
-        """
-        if self.normalize:
-            normalized = (angle - self._angle_min) / (self._angle_max - self._angle_min + self.eps)
-            return float(np.clip(normalized, 0.0, 1.0))
-        return float(angle)
-
-    # ─────────────────────────────────────────────────────────────
-    # 9 Geometric Features
-    # ─────────────────────────────────────────────────────────────
-
-    def _center_of_mass(self, keypoints: NDArray[np.float64]) -> tuple[float, float]:
-        """
-        Tính trọng tâm (Center of Mass) của các keypoints hợp lệ.
-
-        Args:
-            keypoints: Array shape (17, 3) với [x, y, conf].
-
-        Returns:
-            Tuple (cm_x, cm_y) là tọa độ trọng tâm.
-        """
-        valid_mask = self._get_valid_mask(keypoints)
-        valid_points = keypoints[valid_mask, :2]  # Chỉ lấy x, y
-
-        if len(valid_points) == 0:
-            return (0.0, 0.0)
-
-        return (float(np.mean(valid_points[:, 0])), float(np.mean(valid_points[:, 1])))
-
-    def _shoulder_nose_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc vai-mũi (Shoulder-Nose Angle).
-
-        Góc giữa hai vector BA và BC:
-        - B = Nose (đỉnh)
-        - A = L_Shoulder
-        - C = R_Shoulder
-
-        Công thức: arccos((BA · BC) / (|BA| × |BC|))
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-        """
-        nose = keypoints[self.NOSE]
-        l_shoulder = keypoints[self.L_SHOULDER]
-        r_shoulder = keypoints[self.R_SHOULDER]
-
-        # Vector BA = A - B (từ Nose đến L_Shoulder)
-        # Vector BC = C - B (từ Nose đến R_Shoulder)
-        ba = l_shoulder[:2] - nose[:2]
-        bc = r_shoulder[:2] - nose[:2]
-
-        angle = self._angle_between_vectors(ba, bc)
-        return self._normalize_angle(angle)
-
-    def _torso_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc thân (Torso Angle).
-
-        Góc giữa vector thân và trục dọc (y-axis):
-        - Vector v = [mid_hip_x - nose_x, mid_hip_y - nose_y]
-
-        Công thức: arccos(v_y / |v|)
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-        """
-        nose = keypoints[self.NOSE]
-        l_hip = keypoints[self.L_HIP]
-        r_hip = keypoints[self.R_HIP]
-
-        # Trung điểm hông
-        mid_hip = (l_hip[:2] + r_hip[:2]) / 2.0
-
-        # Vector từ mũi đến giữa hông
-        v = mid_hip - nose[:2]
-
-        # Tính góc với trục y (vertical)
-        v_norm = np.linalg.norm(v)
-        if v_norm < self.eps:
-            return 0.0
-
-        # cos(angle) = v_y / |v|  (projection lên trục y)
-        cos_angle = np.clip(v[1] / v_norm, -1.0, 1.0)
-        angle = np.arccos(cos_angle)
-
-        return self._normalize_angle(angle)
-
-    def _hip_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc hông (Hip Angle).
-
-        Góc giữa đường hông và trục ngang (x-axis):
-        - Vector v = [R_hip_x - L_hip_x, R_hip_y - L_hip_y]
-
-        Công thức: arccos(v_x / |v|)
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-        """
-        l_hip = keypoints[self.L_HIP]
-        r_hip = keypoints[self.R_HIP]
-
-        # Vector từ hông trái đến hông phải
-        v = r_hip[:2] - l_hip[:2]
-
-        v_norm = np.linalg.norm(v)
-        if v_norm < self.eps:
-            return 0.0
-
-        # cos(angle) = v_x / |v|  (projection lên trục x)
-        cos_angle = np.clip(v[0] / v_norm, -1.0, 1.0)
-        angle = np.arccos(cos_angle)
-
-        return self._normalize_angle(angle)
-
-    def _shoulder_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc vai (Shoulder Angle).
-
-        Góc giữa đường vai và trục ngang (x-axis):
-        - Vector v = [R_shoulder_x - L_shoulder_x, R_shoulder_y - L_shoulder_y]
-
-        Công thức: arccos(v_x / |v|)
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-        """
-        l_shoulder = keypoints[self.L_SHOULDER]
-        r_shoulder = keypoints[self.R_SHOULDER]
-
-        # Vector từ vai trái đến vai phải
-        v = r_shoulder[:2] - l_shoulder[:2]
-
-        v_norm = np.linalg.norm(v)
-        if v_norm < self.eps:
-            return 0.0
-
-        # cos(angle) = v_x / |v|  (projection lên trục x)
-        cos_angle = np.clip(v[0] / v_norm, -1.0, 1.0)
-        angle = np.arccos(cos_angle)
-
-        return self._normalize_angle(angle)
-
-    def _left_leg_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc chân trái (Left Leg Angle).
-
-        Góc tại đầu gối trái giữa:
-        - Vector v1 = [L_knee - L_hip]  (đùi)
-        - Vector v2 = [L_ankle - L_knee]  (cẳng chân)
-
-        Công thức: arccos((v1 · v2) / (|v1| × |v2|))
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-            Trả về 0.0 nếu thiếu keypoints.
-        """
-        l_hip = keypoints[self.L_HIP]
-        l_knee = keypoints[self.L_KNEE]
-        l_ankle = keypoints[self.L_ANKLE]
-
-        # Kiểm tra keypoints hợp lệ
-        if not (self._is_valid_keypoint(l_hip) and
-                self._is_valid_keypoint(l_knee) and
-                self._is_valid_keypoint(l_ankle)):
-            return 0.0
-
-        # Vector đùi (từ hông đến đầu gối)
-        v1 = l_knee[:2] - l_hip[:2]
-        # Vector cẳng chân (từ đầu gối đến mắt cá)
-        v2 = l_ankle[:2] - l_knee[:2]
-
-        angle = self._angle_between_vectors(v1, v2)
-        return self._normalize_angle(angle)
-
-    def _right_leg_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc chân phải (Right Leg Angle).
-
-        Góc tại đầu gối phải giữa:
-        - Vector v1 = [R_knee - R_hip]  (đùi)
-        - Vector v2 = [R_ankle - R_knee]  (cẳng chân)
-
-        Công thức: arccos((v1 · v2) / (|v1| × |v2|))
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-            Trả về 0.0 nếu thiếu keypoints.
-        """
-        r_hip = keypoints[self.R_HIP]
-        r_knee = keypoints[self.R_KNEE]
-        r_ankle = keypoints[self.R_ANKLE]
-
-        # Kiểm tra keypoints hợp lệ
-        if not (self._is_valid_keypoint(r_hip) and
-                self._is_valid_keypoint(r_knee) and
-                self._is_valid_keypoint(r_ankle)):
-            return 0.0
-
-        # Vector đùi (từ hông đến đầu gối)
-        v1 = r_knee[:2] - r_hip[:2]
-        # Vector cẳng chân (từ đầu gối đến mắt cá)
-        v2 = r_ankle[:2] - r_knee[:2]
-
-        angle = self._angle_between_vectors(v1, v2)
-        return self._normalize_angle(angle)
-
-    def _nose_to_ankle_angle(self, keypoints: NDArray[np.float64]) -> float:
-        """
-        Tính góc mũi-mắt cá chân (Nose-to-Ankle Angle).
-
-        Góc giữa trục cơ thể (từ mũi đến giữa 2 mắt cá) và trục dọc:
-        - Vector v = [mid_ankle_x - nose_x, mid_ankle_y - nose_y]
-
-        Công thức: arccos(v_y / |v|)
-
-        Args:
-            keypoints: Array shape (17, 3).
-
-        Returns:
-            Góc trong radians [0, π], đã chuẩn hóa về [0, 1].
-        """
-        nose = keypoints[self.NOSE]
-        l_ankle = keypoints[self.L_ANKLE]
-        r_ankle = keypoints[self.R_ANKLE]
-
-        # Trung điểm mắt cá
-        mid_ankle = (l_ankle[:2] + r_ankle[:2]) / 2.0
-
-        # Vector từ mũi đến giữa mắt cá
-        v = mid_ankle - nose[:2]
-
-        v_norm = np.linalg.norm(v)
-        if v_norm < self.eps:
-            return 0.0
-
-        # cos(angle) = v_y / |v|  (projection lên trục y)
-        cos_angle = np.clip(v[1] / v_norm, -1.0, 1.0)
-        angle = np.arccos(cos_angle)
-
-        return self._normalize_angle(angle)
-
-    # ─────────────────────────────────────────────────────────────
-    # Main Feature Extraction
-    # ─────────────────────────────────────────────────────────────
-
-    def extract(self, keypoints: NDArray[np.float64]) -> NDArray[np.float64]:
-        """
-        Trích xuất vector đặc trưng 60 chiều từ 17 COCO keypoints.
-
-        Args:
-            keypoints: NumPy array shape (17, 3) chứa [x, y, confidence]
-                       cho 17 COCO keypoints.
-
-        Returns:
-            NumPy array shape (60,) chứa:
-            - [0:51]  - 17 keypoints × 3 = 51 chiều (flattened)
-            - [51:60] - 9 đặc trưng hình học
-
-        Raises:
-            ValueError: Nếu input không có shape (17, 3).
-
-        Ví dụ:
-            >>> extractor = GeometricFeatureExtractor()
-            >>> kp = np.random.rand(17, 3)
-            >>> features = extractor.extract(kp)
-            >>> print(features.shape)
-            (60,)
-            >>> print(features[:5])   # 5 keypoint dims đầu
-            >>> print(features[51:]) # 9 geometric features cuối
-
-        Chi tiết đặc trưng hình học (9 chiều cuối):
-            [51] center_mass_x       - Trọng tâm X
-            [52] center_mass_y       - Trọng tâm Y
-            [53] shoulder_nose_angle - Góc vai-mũi
-            [54] torso_angle         - Góc thân
-            [55] hip_angle          - Góc hông
-            [56] shoulder_angle      - Góc vai
-            [57] left_leg_angle     - Góc chân trái
-            [58] right_leg_angle    - Góc chân phải
-            [59] nose_to_ankle_angle - Góc mũi-mắt cá
-        """
-        # Validate input
-        if keypoints.shape != (17, 3):
-            raise ValueError(
-                f"Expected keypoints shape (17, 3), got {keypoints.shape}. "
-                f"Input phải là mảng 2D với 17 rows (keypoints) và 3 columns (x, y, conf)."
+            return None
+
+        # Concatenate xy + confidence into (17, 3) array.
+        # np.float32 used throughout for PyTorch compatibility and memory efficiency.
+        normalized: np.ndarray = np.concatenate(
+            [keypoints_xy, keypoints_conf.reshape(-1, 1)], axis=1
+        ).astype(np.float32)
+
+        return normalized
+
+    except Exception as e:
+        # YOLO can raise on malformed frames (e.g., all-black images from
+        # corrupt video streams). Gracefully return None rather than crashing.
+        _logger.error(f"Keypoint extraction failed: {e}")
+        return None
+
+
+# ============================================================
+# PIFR FEATURE COMPUTATION
+# ============================================================
+
+def compute_pifr(
+    keypoints: Keypoints | None,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """
+    Compute the full 60D PIFR feature vector from normalized COCO keypoints.
+
+    Feature composition:
+      - Dimensions 0-50  (51D): Flattened 17 × 3 raw COCO keypoints [x, y, conf].
+      - Dimensions 51-58  (9D):  Geometric features (F1-F9) encoding pose geometry.
+      - Total: 60 dimensions.
+
+    The 9D geometric sub-vector captures body configuration invariant to
+    scale and absolute position, making it robust for fall detection:
+      F1:  Center of mass X (confidence-weighted horizontal position).
+      F2:  Center of mass Y (confidence-weighted vertical position).
+      F3:  Shoulder-Nose angle (head tilt).
+      F4:  Torso angle (nose-to-hip axis, radians from vertical).
+      F5:  Hip angle (left-right hip axis).
+      F6:  Shoulder angle (left-right shoulder axis).
+      F7:  Left leg angle (hip-knee-ankle joint).
+      F8:  Right leg angle (hip-knee-ankle joint).
+      F9:  Nose-ankle angle (full-body orientation).
+
+    Args:
+        keypoints: Normalized keypoints of shape (17, 3) with [x, y, conf],
+            all values in [0, 1]. Obtained from extract_keypoints().
+        width:  Original frame width in pixels (unused here — keypoints are
+                already normalized — kept for API compatibility).
+        height: Original frame height in pixels (same as above).
+
+    Returns:
+        60D feature vector as np.ndarray of dtype float32.
+        Returns zero-vector on invalid input to avoid pipeline crashes.
+    """
+    if keypoints is None or len(keypoints) < NUM_COCO_KEYPOINTS:
+        _logger.debug("Invalid keypoints input — returning zero vector.")
+        return np.zeros(TOTAL_PIFR_DIM, dtype=np.float32)
+
+    try:
+        features: list[float] = []
+
+        # ------------------------------------------------------------
+        # Stage 1: Flatten COCO keypoints (51D)
+        # Each of the 17 keypoints contributes x, y, confidence.
+        # This preserves raw spatial information for the Transformer.
+        # ------------------------------------------------------------
+        for i in range(NUM_COCO_KEYPOINTS):
+            features.extend([
+                float(keypoints[i, 0]),
+                float(keypoints[i, 1]),
+                float(keypoints[i, 2]),
+            ])
+
+        # ------------------------------------------------------------
+        # Stage 2: Geometric features (9D)
+        # All angles computed in radians using arccos on normalized vectors.
+        # EPSILON added before division to prevent NaN from /0.
+        # ------------------------------------------------------------
+
+        # F1: Confidence-weighted center of mass — X coordinate.
+        # Weighted by keypoint confidence to suppress noisy detections.
+        conf_sum: float = float(np.sum(keypoints[:, 2])) + EPSILON
+        center_x: float = float(np.sum(keypoints[:, 0] * keypoints[:, 2])) / conf_sum
+        features.append(center_x)
+
+        # F2: Confidence-weighted center of mass — Y coordinate.
+        center_y: float = float(np.sum(keypoints[:, 1] * keypoints[:, 2])) / conf_sum
+        features.append(center_y)
+
+        # F3: Shoulder-Nose angle — measures head tilt relative to shoulders.
+        # Two vectors from nose to each shoulder, angle between them.
+        v1: np.ndarray = keypoints[LEFT_SHOULDER, :2] - keypoints[NOSE, :2]
+        v2: np.ndarray = keypoints[RIGHT_SHOULDER, :2] - keypoints[NOSE, :2]
+        n1: float = float(np.linalg.norm(v1))
+        n2: float = float(np.linalg.norm(v2))
+        angle: float
+        if n1 > 0 and n2 > 0:
+            # np.dot(v1, v2) / (n1 * n2) computes cos(angle).
+            # np.clip ensures the argument is within [-1, 1] to prevent
+            # domain errors in arccos due to floating-point rounding.
+            angle = float(np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0)))
+        else:
+            angle = 0.0
+        features.append(angle)
+
+        # F4: Torso angle — angle between nose-to-hip axis and vertical.
+        # Computed as arccos(v[1] / ||v||) where v = mid_hip - nose.
+        # This directly captures whether the person is upright (small angle)
+        # or lying down (large angle, approaching π).
+        mid_hip: np.ndarray = (keypoints[LEFT_HIP, :2] + keypoints[RIGHT_HIP, :2]) / 2.0
+        v: np.ndarray = mid_hip - keypoints[NOSE, :2]
+        n: float = float(np.linalg.norm(v))
+        torso_angle: float = float(np.arccos(np.clip(v[1] / n, -1.0, 1.0))) if n > 0 else 0.0
+        features.append(torso_angle)
+
+        # F5: Hip angle — angle of the hip axis relative to horizontal.
+        v = keypoints[RIGHT_HIP, :2] - keypoints[LEFT_HIP, :2]
+        n = float(np.linalg.norm(v))
+        hip_angle: float = float(np.arccos(np.clip(v[0] / n, -1.0, 1.0))) if n > 0 else 0.0
+        features.append(hip_angle)
+
+        # F6: Shoulder angle — angle of the shoulder axis relative to horizontal.
+        v = keypoints[RIGHT_SHOULDER, :2] - keypoints[LEFT_SHOULDER, :2]
+        n = float(np.linalg.norm(v))
+        shoulder_angle: float = float(np.arccos(np.clip(v[0] / n, -1.0, 1.0))) if n > 0 else 0.0
+        features.append(shoulder_angle)
+
+        # F7: Left leg angle — hip-knee-ankle joint angle.
+        # A fall typically produces a sharp knee bend, detected here.
+        v1 = keypoints[LEFT_KNEE, :2] - keypoints[LEFT_HIP, :2]
+        v2 = keypoints[LEFT_ANKLE, :2] - keypoints[LEFT_KNEE, :2]
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        left_leg_angle: float
+        if n1 > 0 and n2 > 0:
+            left_leg_angle = float(
+                np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
             )
+        else:
+            left_leg_angle = 0.0
+        features.append(left_leg_angle)
 
-        # ─── Phần 1: Flattened Keypoints (51 chiều) ───
-        # Flatten theo row-major order: [x0, y0, conf0, x1, y1, conf1, ...]
-        keypoints_flat = keypoints.flatten()  # shape: (51,)
-
-        # ─── Phần 2: Geometric Features (9 chiều) ───
-        geometric_features = np.array([
-            # 1 & 2. Center of Mass
-            self._center_of_mass(keypoints)[0],       # cm_x
-            self._center_of_mass(keypoints)[1],       # cm_y
-
-            # 3. Shoulder-Nose Angle
-            self._shoulder_nose_angle(keypoints),
-
-            # 4. Torso Angle
-            self._torso_angle(keypoints),
-
-            # 5. Hip Angle
-            self._hip_angle(keypoints),
-
-            # 6. Shoulder Angle
-            self._shoulder_angle(keypoints),
-
-            # 7. Left Leg Angle
-            self._left_leg_angle(keypoints),
-
-            # 8. Right Leg Angle
-            self._right_leg_angle(keypoints),
-
-            # 9. Nose-to-Ankle Angle
-            self._nose_to_ankle_angle(keypoints),
-        ], dtype=np.float64)
-
-        # ─── Concatenate: 51 + 9 = 60 chiều ───
-        final_features = np.concatenate([keypoints_flat, geometric_features])
-
-        return final_features
-
-    def extract_batch(
-        self,
-        keypoints_batch: NDArray[np.float64],
-    ) -> NDArray[np.float64]:
-        """
-        Trích xuất features cho một batch các keypoints.
-
-        Args:
-            keypoints_batch: NumPy array shape (B, 17, 3) với B là batch size.
-
-        Returns:
-            NumPy array shape (B, 60).
-
-        Ví dụ:
-            >>> extractor = GeometricFeatureExtractor()
-            >>> batch = np.random.rand(8, 17, 3)  # 8 samples
-            >>> features = extractor.extract_batch(batch)
-            >>> print(features.shape)
-            (8, 60)
-        """
-        if keypoints_batch.ndim != 3 or keypoints_batch.shape[1:] != (17, 3):
-            raise ValueError(
-                f"Expected shape (B, 17, 3), got {keypoints_batch.shape}."
+        # F8: Right leg angle — symmetric to left leg angle.
+        v1 = keypoints[RIGHT_KNEE, :2] - keypoints[RIGHT_HIP, :2]
+        v2 = keypoints[RIGHT_ANKLE, :2] - keypoints[RIGHT_KNEE, :2]
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        right_leg_angle: float
+        if n1 > 0 and n2 > 0:
+            right_leg_angle = float(
+                np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
             )
+        else:
+            right_leg_angle = 0.0
+        features.append(right_leg_angle)
 
-        batch_size = keypoints_batch.shape[0]
-        # Pre-allocate output array for efficiency
-        features = np.zeros((batch_size, 60), dtype=np.float64)
+        # F9: Nose-ankle angle — full-body vertical alignment angle.
+        # During a fall, the nose-ankle axis rotates from vertical (~0 rad)
+        # toward horizontal (~π/2 rad), providing a strong fall indicator.
+        mid_ankle: np.ndarray = (
+            keypoints[LEFT_ANKLE, :2] + keypoints[RIGHT_ANKLE, :2]
+        ) / 2.0
+        v = mid_ankle - keypoints[NOSE, :2]
+        n = float(np.linalg.norm(v))
+        nose_ankle_angle: float = (
+            float(np.arccos(np.clip(v[1] / n, -1.0, 1.0))) if n > 0 else 0.0
+        )
+        features.append(nose_ankle_angle)
 
-        # Vectorized extraction using broadcasting
-        # Extract all keypoints flattened at once
-        features[:, :51] = keypoints_batch.reshape(batch_size, -1)
+        return np.array(features, dtype=np.float32)
 
-        # Compute geometric features for each sample in batch
-        for i in range(batch_size):
-            kp = keypoints_batch[i]
-            # Center of mass
-            valid_mask = kp[:, 2] >= self.conf_threshold
-            valid_points = kp[valid_mask, :2]
-            if len(valid_points) > 0:
-                features[i, 51] = float(np.mean(valid_points[:, 0]))
-                features[i, 52] = float(np.mean(valid_points[:, 1]))
+    except Exception as e:
+        # Numerical errors (e.g., NaN from arccos outside [-1,1]) are caught here.
+        # Return zero vector so the sliding window is not corrupted by NaN.
+        _logger.error(f"PIFR computation failed: {e}")
+        return np.zeros(TOTAL_PIFR_DIM, dtype=np.float32)
 
-            # Vectorized angle computation
-            angles = self._compute_all_angles_batch(kp)
-            features[i, 53:60] = angles
+
+def compute_9_pifr_features(keypoints: Keypoints | None) -> np.ndarray:
+    """
+    Compute only the 9D geometric PIFR sub-vector (F1-F9) from normalized keypoints.
+
+    This standalone function is useful when the COCO keypoints (51D) are already
+    available elsewhere and only the geometric features are needed.
+
+    Args:
+        keypoints: Normalized keypoints of shape (17, 3) with [x, y, conf],
+            values in [0, 1] range.
+
+    Returns:
+        9D feature vector as np.ndarray of dtype float32.
+    """
+    if keypoints is None or len(keypoints) < NUM_COCO_KEYPOINTS:
+        _logger.debug("Invalid keypoints for 9D PIFR — returning zero vector.")
+        return np.zeros(GEOMETRIC_DIM, dtype=np.float32)
+
+    try:
+        features: np.ndarray = np.zeros(GEOMETRIC_DIM, dtype=np.float32)
+
+        # F1: Center of mass X (confidence-weighted).
+        # EPSILON prevents division by zero if all keypoint confidences are 0.
+        conf_sum: float = float(np.sum(keypoints[:, 2])) + EPSILON
+        features[0] = float(np.sum(keypoints[:, 0] * keypoints[:, 2])) / conf_sum
+
+        # F2: Center of mass Y (confidence-weighted).
+        features[1] = float(np.sum(keypoints[:, 1] * keypoints[:, 2])) / conf_sum
+
+        # ----------------------------------------------------------------
+        # Helper: _angle(v1, v2)
+        # Computes the angle in radians between two 2D vectors using arccos
+        # of their normalized dot product. Returns 0.0 if either vector
+        # has zero magnitude (degenerate case).
+        # ----------------------------------------------------------------
+        def _angle(v1: np.ndarray, v2: np.ndarray) -> float:
+            n1: float = float(np.linalg.norm(v1))
+            n2: float = float(np.linalg.norm(v2))
+            if n1 > 0 and n2 > 0:
+                return float(
+                    np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+                )
+            return 0.0
+
+        # F3: Shoulder-Nose angle.
+        v1 = keypoints[LEFT_SHOULDER, :2] - keypoints[NOSE, :2]
+        v2 = keypoints[RIGHT_SHOULDER, :2] - keypoints[NOSE, :2]
+        features[2] = _angle(v1, v2)
+
+        # F4: Torso angle (nose to mid-hip vs. vertical).
+        mid_hip = (keypoints[LEFT_HIP, :2] + keypoints[RIGHT_HIP, :2]) / 2.0
+        v = mid_hip - keypoints[NOSE, :2]
+        n = float(np.linalg.norm(v))
+        features[3] = float(np.arccos(np.clip(v[1] / n, -1.0, 1.0))) if n > 0 else 0.0
+
+        # F5: Hip angle (left-right hip axis vs. horizontal).
+        v = keypoints[RIGHT_HIP, :2] - keypoints[LEFT_HIP, :2]
+        n = float(np.linalg.norm(v))
+        features[4] = float(np.arccos(np.clip(v[0] / n, -1.0, 1.0))) if n > 0 else 0.0
+
+        # F6: Shoulder angle (left-right shoulder axis vs. horizontal).
+        v = keypoints[RIGHT_SHOULDER, :2] - keypoints[LEFT_SHOULDER, :2]
+        n = float(np.linalg.norm(v))
+        features[5] = float(np.arccos(np.clip(v[0] / n, -1.0, 1.0))) if n > 0 else 0.0
+
+        # F7: Left leg angle (hip-knee-ankle).
+        v1 = keypoints[LEFT_KNEE, :2] - keypoints[LEFT_HIP, :2]
+        v2 = keypoints[LEFT_ANKLE, :2] - keypoints[LEFT_KNEE, :2]
+        features[6] = _angle(v1, v2)
+
+        # F8: Right leg angle (hip-knee-ankle).
+        v1 = keypoints[RIGHT_KNEE, :2] - keypoints[RIGHT_HIP, :2]
+        v2 = keypoints[RIGHT_ANKLE, :2] - keypoints[RIGHT_KNEE, :2]
+        features[7] = _angle(v1, v2)
+
+        # F9: Nose-ankle angle (full-body vertical alignment).
+        mid_ankle = (keypoints[LEFT_ANKLE, :2] + keypoints[RIGHT_ANKLE, :2]) / 2.0
+        v = mid_ankle - keypoints[NOSE, :2]
+        n = float(np.linalg.norm(v))
+        features[8] = float(np.arccos(np.clip(v[1] / n, -1.0, 1.0))) if n > 0 else 0.0
 
         return features
 
-    def _compute_all_angles_batch(self, keypoints: NDArray[np.float64]) -> NDArray[np.float64]:
-        """
-        Compute all 7 geometric angles in one pass (vectorized).
+    except Exception as e:
+        _logger.error(f"9D PIFR feature computation failed: {e}")
+        return np.zeros(GEOMETRIC_DIM, dtype=np.float32)
 
-        Returns:
-            Array of 7 angles: [shoulder_nose, torso, hip, shoulder, left_leg, right_leg, nose_ankle]
-        """
-        angles = np.zeros(7, dtype=np.float64)
-        eps = self.eps
 
-        # Indices
-        N, LS, RS, LH, RH, LK, RK, LA, RA = 0, 5, 6, 11, 12, 13, 14, 15, 16
+# ============================================================
+# VISUALIZATION
+# ============================================================
 
-        # Shoulder-Nose Angle
-        ba = keypoints[LS, :2] - keypoints[N, :2]
-        bc = keypoints[RS, :2] - keypoints[N, :2]
-        n1, n2 = np.linalg.norm(ba), np.linalg.norm(bc)
-        if n1 > eps and n2 > eps:
-            cos_a = np.clip(np.dot(ba, bc) / (n1 * n2), -1, 1)
-            angles[0] = np.arccos(cos_a)
+def draw_skeleton(
+    frame: Frame,
+    keypoints: Keypoints | None,
+    color: RGBColor = (0, 255, 0),
+) -> Frame:
+    """
+    Render the COCO skeleton on a BGR frame for real-time visualization.
 
-        # Torso Angle
-        mid_hip = (keypoints[LH, :2] + keypoints[RH, :2]) / 2
-        v = mid_hip - keypoints[N, :2]
-        n = np.linalg.norm(v)
-        if n > eps:
-            angles[1] = np.arccos(np.clip(v[1] / n, -1, 1))
+    Draws 12 line segments connecting anatomically adjacent keypoints
+    (COCO topology) and individual keypoint circles with confidence
+    threshold filtering.
 
-        # Hip Angle
-        v = keypoints[RH, :2] - keypoints[LH, :2]
-        n = np.linalg.norm(v)
-        if n > eps:
-            angles[2] = np.arccos(np.clip(v[0] / n, -1, 1))
+    Args:
+        frame: BGR image from OpenCV (H × W × 3).
+        keypoints: Array of shape (17, 3) with [x, y, conf] in [0, 1].
+        color: BGR color tuple for skeleton rendering (default: green).
 
-        # Shoulder Angle
-        v = keypoints[RS, :2] - keypoints[LS, :2]
-        n = np.linalg.norm(v)
-        if n > eps:
-            angles[3] = np.arccos(np.clip(v[0] / n, -1, 1))
+    Returns:
+        Deep-copy of the input frame with skeleton overlaid.
+        Returns original frame unchanged if keypoints are invalid.
+    """
+    if keypoints is None or len(keypoints) < NUM_COCO_KEYPOINTS:
+        _logger.debug("Cannot draw skeleton — invalid keypoints.")
+        return frame
 
-        # Left Leg Angle
-        if all(keypoints[i, 2] >= self.conf_threshold for i in [LH, LK, LA]):
-            v1 = keypoints[LK, :2] - keypoints[LH, :2]
-            v2 = keypoints[LA, :2] - keypoints[LK, :2]
-            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
-            if n1 > eps and n2 > eps:
-                angles[4] = np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
+    try:
+        h: int
+        w: int
+        h, w = frame.shape[:2]
+        annotated: Frame = frame.copy()
 
-        # Right Leg Angle
-        if all(keypoints[i, 2] >= self.conf_threshold for i in [RH, RK, RA]):
-            v1 = keypoints[RK, :2] - keypoints[RH, :2]
-            v2 = keypoints[RA, :2] - keypoints[RK, :2]
-            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
-            if n1 > eps and n2 > eps:
-                angles[5] = np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
-
-        # Nose-to-Ankle Angle
-        mid_ankle = (keypoints[LA, :2] + keypoints[RA, :2]) / 2
-        v = mid_ankle - keypoints[N, :2]
-        n = np.linalg.norm(v)
-        if n > eps:
-            angles[6] = np.arccos(np.clip(v[1] / n, -1, 1))
-
-        # Normalize all angles to [0, 1] if enabled
-        if self.normalize:
-            angle_max = np.pi
-            angles = np.clip(angles / angle_max, 0, 1)
-
-        return angles
-
-    def get_feature_names(self) -> list[str]:
-        """
-        Trả về danh sách tên của 60 đặc trưng.
-
-        Returns:
-            List 60 strings với tên các đặc trưng.
-        """
-        keypoint_names = [f"{name}_x" for name in self.KEYPOINT_NAMES] + \
-                         [f"{name}_y" for name in self.KEYPOINT_NAMES] + \
-                         [f"{name}_conf" for name in self.KEYPOINT_NAMES]
-
-        geometric_names = [
-            "center_mass_x",
-            "center_mass_y",
-            "shoulder_nose_angle",
-            "torso_angle",
-            "hip_angle",
-            "shoulder_angle",
-            "left_leg_angle",
-            "right_leg_angle",
-            "nose_to_ankle_angle",
+        # COCO body topology: list of (start_index, end_index) pairs.
+        # Connections follow anatomical structure: upper limbs, torso, lower limbs.
+        connections: list[tuple[int, int]] = [
+            (5, 6),    # shoulders
+            (5, 7),    # left upper arm (shoulder → elbow)
+            (7, 9),    # left forearm (elbow → wrist)
+            (6, 8),    # right upper arm (shoulder → elbow)
+            (8, 10),   # right forearm (elbow → wrist)
+            (5, 11),   # left torso (shoulder → hip)
+            (6, 12),   # right torso (shoulder → hip)
+            (11, 12),  # hip connector
+            (11, 13),  # left thigh (hip → knee)
+            (13, 15),  # left shin (knee → ankle)
+            (12, 14),  # right thigh (hip → knee)
+            (14, 16),  # right shin (knee → ankle)
         ]
 
-        return keypoint_names + geometric_names
+        # Draw each bone segment as a line if both endpoints are confident.
+        for joint1, joint2 in connections:
+            if (
+                keypoints[joint1, 2] > KEYPOINT_VISUALIZATION_CONF
+                and keypoints[joint2, 2] > KEYPOINT_VISUALIZATION_CONF
+            ):
+                pt1: tuple[int, int] = (
+                    int(keypoints[joint1, 0] * w),
+                    int(keypoints[joint1, 1] * h),
+                )
+                pt2: tuple[int, int] = (
+                    int(keypoints[joint2, 0] * w),
+                    int(keypoints[joint2, 1] * h),
+                )
+                cv2.line(annotated, pt1, pt2, color, 2)
 
-    def __repr__(self) -> str:
-        return (
-            f"GeometricFeatureExtractor("
-            f"conf_threshold={self.conf_threshold}, "
-            f"eps={self.eps}, "
-            f"normalize={self.normalize})"
-        )
+        # Draw keypoint circles — outer white ring + inner colored dot.
+        # The ring provides visual contrast against varied backgrounds.
+        for kp in keypoints:
+            if kp[2] > KEYPOINT_VISUALIZATION_CONF:
+                x: int = int(kp[0] * w)
+                y: int = int(kp[1] * h)
+                cv2.circle(annotated, (x, y), 4, color, -1)   # filled center
+                cv2.circle(annotated, (x, y), 6, (255, 255, 255), 1)  # white ring
 
+        return annotated
 
-# ═══════════════════════════════════════════════════════════════
-# Convenience Functions (standalone API)
-# ═══════════════════════════════════════════════════════════════
-
-# Default extractor instance cho reuse
-_default_extractor: GeometricFeatureExtractor | None = None
-
-
-def get_default_extractor(
-    conf_threshold: float = 0.2,
-    normalize: bool = True,
-) -> GeometricFeatureExtractor:
-    """
-    Lấy default extractor instance (singleton pattern).
-
-    Args:
-        conf_threshold: Ngưỡng confidence.
-        normalize: Có chuẩn hóa góc không.
-
-    Returns:
-        GeometricFeatureExtractor instance.
-    """
-    global _default_extractor
-    if _default_extractor is None:
-        _default_extractor = GeometricFeatureExtractor(
-            conf_threshold=conf_threshold,
-            normalize=normalize,
-        )
-    return _default_extractor
-
-
-def extract_pifr_features(keypoints: NDArray[np.float64]) -> NDArray[np.float64]:
-    """
-    Convenience function để trích xuất PIFR features.
-
-    Args:
-        keypoints: NumPy array shape (17, 3).
-
-    Returns:
-        NumPy array shape (60,).
-    """
-    extractor = get_default_extractor()
-    return extractor.extract(keypoints)
-
-
-# ═══════════════════════════════════════════════════════════════
-# Demo & Testing
-# ═══════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("PIFR Geometric Feature Extractor - Demo")
-    print("=" * 60)
-
-    # Tạo sample keypoints (17 COCO keypoints)
-    np.random.seed(42)
-
-    # Simulate a standing pose (normalized coordinates ~0.3-0.7)
-    standing_pose = np.array([
-        # [x, y, conf]
-        [0.50, 0.15, 0.95],  # 0: nose
-        [0.48, 0.14, 0.90],  # 1: l_eye
-        [0.52, 0.14, 0.92],  # 2: r_eye
-        [0.47, 0.13, 0.85],  # 3: l_ear
-        [0.53, 0.13, 0.88],  # 4: r_ear
-        [0.40, 0.30, 0.95],  # 5: l_shoulder
-        [0.60, 0.30, 0.95],  # 6: r_shoulder
-        [0.35, 0.45, 0.90],  # 7: l_elbow
-        [0.65, 0.45, 0.88],  # 8: r_elbow
-        [0.32, 0.60, 0.85],  # 9: l_wrist
-        [0.68, 0.60, 0.82],  # 10: r_wrist
-        [0.43, 0.55, 0.95],  # 11: l_hip
-        [0.57, 0.55, 0.95],  # 12: r_hip
-        [0.44, 0.75, 0.90],  # 13: l_knee
-        [0.56, 0.75, 0.90],  # 14: r_knee
-        [0.43, 0.95, 0.88],  # 15: l_ankle
-        [0.57, 0.95, 0.87],  # 16: r_ankle
-    ], dtype=np.float64)
-
-    # Simulate a lying/fallen pose (horizontal)
-    lying_pose = np.array([
-        [0.90, 0.50, 0.95],  # 0: nose (bên phải)
-        [0.92, 0.49, 0.90],  # 1: l_eye
-        [0.94, 0.51, 0.92],  # 2: r_eye
-        [0.95, 0.48, 0.85],  # 3: l_ear
-        [0.96, 0.52, 0.88],  # 4: r_ear
-        [0.75, 0.45, 0.95],  # 5: l_shoulder
-        [0.75, 0.55, 0.95],  # 6: r_shoulder
-        [0.60, 0.42, 0.90],  # 7: l_elbow
-        [0.60, 0.58, 0.88],  # 8: r_elbow
-        [0.45, 0.40, 0.85],  # 9: l_wrist
-        [0.45, 0.60, 0.82],  # 10: r_wrist
-        [0.40, 0.45, 0.95],  # 11: l_hip
-        [0.40, 0.55, 0.95],  # 12: r_hip
-        [0.20, 0.43, 0.90],  # 13: l_knee
-        [0.20, 0.57, 0.90],  # 14: r_knee
-        [0.05, 0.45, 0.88],  # 15: l_ankle
-        [0.05, 0.55, 0.87],  # 16: r_ankle
-    ], dtype=np.float64)
-
-    # Initialize extractor
-    extractor = GeometricFeatureExtractor(conf_threshold=0.2, normalize=True)
-
-    print(f"\nExtractor config: {extractor}")
-    print(f"\nFeature names (last 9): {extractor.get_feature_names()[51:]}")
-
-    # Extract features
-    print("\n" + "-" * 40)
-    print("STANDING POSE:")
-    print("-" * 40)
-    feat_standing = extractor.extract(standing_pose)
-    print(f"  Output shape: {feat_standing.shape}")
-    print(f"  Keypoints (first 5): {feat_standing[:5]}")
-    print(f"  Geometric features: {feat_standing[51:]}")
-    print(f"  Torso angle: {feat_standing[54]:.4f} (standing ~ 0.0)")
-    print(f"  Nose-to-ankle: {feat_standing[59]:.4f} (standing ~ 0.0)")
-
-    print("\n" + "-" * 40)
-    print("LYING/FALLEN POSE:")
-    print("-" * 40)
-    feat_lying = extractor.extract(lying_pose)
-    print(f"  Output shape: {feat_lying.shape}")
-    print(f"  Keypoints (first 5): {feat_lying[:5]}")
-    print(f"  Geometric features: {feat_lying[51:]}")
-    print(f"  Torso angle: {feat_lying[54]:.4f} (lying ~ 1.0)")
-    print(f"  Nose-to-ankle: {feat_lying[59]:.4f} (lying ~ 1.0)")
-
-    print("\n" + "-" * 40)
-    print("BATCH EXTRACTION:")
-    print("-" * 40)
-    batch = np.stack([standing_pose, lying_pose], axis=0)
-    print(f"  Input batch shape: {batch.shape}")
-    batch_features = extractor.extract_batch(batch)
-    print(f"  Output batch shape: {batch_features.shape}")
-
-    print("\n" + "=" * 60)
-    print("Demo completed successfully!")
-    print("=" * 60)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Standalone Functions & Constants (for inference pipeline)
-# ═══════════════════════════════════════════════════════════════════════
-
-# Module-level constants
-EPS = 1e-6
-IMGSZ = 640
-MIN_MEAN_CONF = 0.2
-FEATURE_DIM = 60
-SEQ_LEN = 60
-
-
-def resample_to_length(seq: NDArray[np.float64], target_len: int = 60) -> NDArray[np.float64]:
-    """
-    Resample a sequence to a fixed length using linear interpolation.
-
-    Args:
-        seq: Input array of shape (N, feature_dim) or (N,).
-        target_len: Target length for output sequence.
-
-    Returns:
-        Resampled array of shape (target_len, feature_dim) or (target_len,).
-    """
-    n = len(seq)
-    if n == 0:
-        return np.zeros((target_len, seq.shape[1] if seq.ndim > 1 else 1), dtype=np.float64)
-    if n == target_len:
-        return seq.copy()
-
-    # Vectorized linear interpolation
-    indices = np.linspace(0, n - 1, target_len)
-    floor_idx = np.floor(indices).astype(int)
-    ceil_idx = np.minimum(floor_idx + 1, n - 1)
-    weights = (indices - floor_idx).reshape(-1, 1) if seq.ndim > 1 else (indices - floor_idx)
-
-    return (1 - weights) * seq[floor_idx] + weights * seq[ceil_idx]
-
-
-def frame_to_vector_60(
-    keypoints: NDArray[np.float64],
-    extractor: GeometricFeatureExtractor | None = None,
-    box_wh: tuple[float, float] | None = None,
-) -> NDArray[np.float64]:
-    """
-    Chuyển đổi keypoints của một frame thành vector đặc trưng 60-D PIFR.
-
-    Args:
-        keypoints: Array shape (17, 3) với [x, y, conf].
-        extractor: Instance extractor đã cấu hình (mặc định: tạo mới).
-        box_wh: Tuple (width, height) của bounding box - dùng để chuẩn hóa tọa độ
-                theo kích thước thực của đối tượng thay vì toàn bộ frame.
-
-    Returns:
-        Vector đặc trưng 60-D dạng 1D array.
-
-    Ví dụ:
-        >>> keypoints = np.random.rand(17, 3)
-        >>> vec = frame_to_vector_60(keypoints)
-        >>> print(vec.shape)
-        (60,)
-    """
-    if extractor is None:
-        extractor = GeometricFeatureExtractor()
-    return extractor.extract(keypoints)
+    except Exception as e:
+        _logger.error(f"Skeleton drawing failed: {e}")
+        return frame
