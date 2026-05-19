@@ -794,41 +794,33 @@ print(f"\n✓ Training complete!")
 print(f"✓ Model saved: {MODEL_DIR / 'best_model.pth'}")
 ```
 
-## Cell 5: Evaluate Model
+## Cell 5: Evaluate Model (with Plots & FPS)
 
 ```python
 import torch
 import numpy as np
-import os
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
+import seaborn as sns
+import time
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc, precision_recall_curve, average_precision_score
 from pathlib import Path
-from tqdm import tqdm
 
-# Paths
-DATA_DIR = Path("/kaggle/input/datasets/phmthduyn/caucafall-processed")
+# Config
 MODEL_PATH = Path("/kaggle/working/models/best_model.pth")
+LOG_DIR = Path("/kaggle/working/logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Training config (must match!)
+d_model = 256
+nhead = 8
+num_layers = 4
+dropout = 0.2
 
 if not MODEL_PATH.exists():
     print("✗ Model not found. Run Cell 4 first.")
-elif not DATA_DIR.exists():
-    print(f"✗ Data directory not found: {DATA_DIR}")
 else:
-    # Load data
-    print("Loading data...")
-    X_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('X_')])
-    y_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('y_')])
-    X = np.array([np.load(DATA_DIR / f) for f in tqdm(X_files, desc="Loading X")])
-    y = np.array([np.load(DATA_DIR / f).item() for f in tqdm(y_files, desc="Loading y")])
-    print(f"Dataset: X.shape={X.shape}, y.shape={y.shape}")
-    
+    # Load model
     from src.hybrid_transformer import HybridFallTransformer
-    
-    # Must match training config!
-    d_model = 256
-    nhead = 8
-    num_layers = 4
-    dropout = 0.2
     
     model = HybridFallTransformer(
         input_dim=X.shape[2],
@@ -841,14 +833,12 @@ else:
     model.load_state_dict(torch.load(MODEL_PATH, weights_only=True))
     model.eval()
     
-    # Evaluate on test set
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
+    print(f"Device: {device}")
     
     # Get predictions
-    all_preds = []
-    all_probs = []
-    all_labels = []
+    all_preds, all_probs, all_labels = [], [], []
     
     with torch.no_grad():
         for i in range(0, len(X), 64):
@@ -860,23 +850,110 @@ else:
             all_preds.extend(preds.tolist())
             all_labels.extend(y[i:i+64].tolist())
     
-    # Metrics
+    # ========== METRICS ==========
+    cm = confusion_matrix(all_labels, all_preds)
+    fpr, tpr, _ = roc_curve(all_labels, all_probs)
+    roc_auc = auc(fpr, tpr)
+    precision, recall, _ = precision_recall_curve(all_labels, all_probs)
+    ap = average_precision_score(all_labels, all_probs)
+    
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0  # Recall/Sensitivity/True Positive Rate
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    
     print("=" * 60)
     print("EVALUATION RESULTS")
     print("=" * 60)
-    print(classification_report(all_labels, all_preds, target_names=['No Fall', 'Fall']))
+    print(classification_report(all_labels, all_preds, target_names=['No Fall', 'Fall'], digits=4))
+    print(f"\nConfusion Matrix:")
+    print(f"  TN={tn}, FP={fp}")
+    print(f"  FN={fn}, TP={tp}")
+    print(f"\nAdditional Metrics:")
+    print(f"  Sensitivity (TPR): {sensitivity:.4f}")
+    print(f"  Specificity (TNR): {specificity:.4f}")
+    print(f"  ROC AUC:           {roc_auc:.4f}")
+    print(f"  PR AP:             {ap:.4f}")
     
-    # Confusion Matrix
-    cm = confusion_matrix(all_labels, all_preds)
-    print("Confusion Matrix:")
-    print(cm)
+    # ========== FPS ==========
+    print("\n" + "=" * 60)
+    print("INFERENCE SPEED (FPS)")
+    print("=" * 60)
     
-    # ROC Curve
-    fpr, tpr, _ = roc_curve(all_labels, all_probs)
-    roc_auc = auc(fpr, tpr)
-    print(f"\nROC AUC: {roc_auc:.4f}")
+    # Warmup
+    dummy = torch.FloatTensor(1, 60, 60).to(device)
+    for _ in range(10):
+        _ = model(dummy)
     
-    print("\n✓ Evaluation complete!")
+    # Benchmark
+    n_runs = 100
+    start = time.time()
+    for _ in range(n_runs):
+        batch = torch.FloatTensor(32, 60, 60).to(device)
+        _ = model(batch)
+    elapsed = time.time() - start
+    
+    fps_batch = n_runs * 32 / elapsed
+    fps_single = 1 / (elapsed / n_runs / 32)
+    
+    print(f"Batch size 32: {fps_batch:.1f} samples/sec ({fps_batch/32:.1f} iters/sec)")
+    print(f"Single sample: {fps_single:.1f} FPS")
+    
+    # ========== PLOTS ==========
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    
+    # 1. Confusion Matrix
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0],
+                xticklabels=['No Fall', 'Fall'], yticklabels=['No Fall', 'Fall'])
+    axes[0].set_xlabel('Predicted')
+    axes[0].set_ylabel('Actual')
+    axes[0].set_title('Confusion Matrix')
+    
+    # 2. ROC Curve
+    axes[1].plot(fpr, tpr, 'b-', linewidth=2, label=f'ROC (AUC = {roc_auc:.4f})')
+    axes[1].plot([0, 1], [0, 1], 'k--', linewidth=1)
+    axes[1].set_xlabel('False Positive Rate')
+    axes[1].set_ylabel('True Positive Rate')
+    axes[1].set_title('ROC Curve')
+    axes[1].legend(loc='lower right')
+    axes[1].grid(True, alpha=0.3)
+    
+    # 3. Precision-Recall Curve
+    axes[2].plot(recall, precision, 'g-', linewidth=2, label=f'PR (AP = {ap:.4f})')
+    axes[2].axhline(y=np.sum(y)/len(y), color='r', linestyle='--', label='Baseline')
+    axes[2].set_xlabel('Recall')
+    axes[2].set_ylabel('Precision')
+    axes[2].set_title('Precision-Recall Curve')
+    axes[2].legend(loc='lower left')
+    axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(LOG_DIR / 'evaluation_results.png', dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f"\n✓ Plot saved to: {LOG_DIR / 'evaluation_results.png'}")
+    
+    # ========== SAVE METRICS ==========
+    import json
+    metrics = {
+        "accuracy": float((tp + tn) / (tp + tn + fp + fn)),
+        "precision": float(tp / (tp + fp)) if (tp + fp) > 0 else 0,
+        "recall": float(sensitivity),
+        "specificity": float(specificity),
+        "f1": float(2 * tp / (2 * tp + fp + fn)) if (2 * tp + fp + fn) > 0 else 0,
+        "roc_auc": float(roc_auc),
+        "average_precision": float(ap),
+        "confusion_matrix": cm.tolist(),
+        "fps_batch_32": float(fps_batch),
+        "fps_single": float(fps_single),
+        "total_samples": len(y),
+        "fall_samples": int(np.sum(y == 1)),
+        "nofall_samples": int(np.sum(y == 0))
+    }
+    
+    with open(LOG_DIR / 'final_metrics.json', 'w') as f:
+        json.dump(metrics, f, indent=2)
+    
+    print(f"\n✓ Metrics saved to: {LOG_DIR / 'final_metrics.json'}")
+    print("=" * 60)
 ```
 
 ## Cell 6: Save Results
