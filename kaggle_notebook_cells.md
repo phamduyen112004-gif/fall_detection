@@ -675,8 +675,15 @@ else:
 
     fpr_roc, tpr_roc, _ = roc_curve(y_true, y_scores)
     roc_auc = auc(fpr_roc, tpr_roc)
-    precision_arr, recall_arr, _ = precision_recall_curve(y_true, y_scores)
+    precision_arr, recall_arr, thresholds_pr = precision_recall_curve(y_true, y_scores)
     pr_auc = average_precision_score(y_true, y_scores)
+
+    # ========== CALCULATE OPTIMAL THRESHOLD (F1-maximization) ==========
+    f1_scores = (2 * precision_arr[:-1] * recall_arr[:-1]) / (precision_arr[:-1] + recall_arr[:-1] + 1e-8)
+    optimal_idx = np.argmax(f1_scores)
+    optimal_threshold = float(thresholds_pr[optimal_idx]) if optimal_idx < len(thresholds_pr) else 0.5
+    optimal_f1 = float(f1_scores[optimal_idx])
+    print(f"\n[Optimal Threshold] threshold={optimal_threshold:.4f}, F1={optimal_f1:.4f}")
 
     print("\n" + "=" * 70)
     print("5-FOLD CROSS-VALIDATION RESULTS (Aggregated)")
@@ -810,6 +817,8 @@ else:
         "f1_score": float(f1), "roc_auc": float(roc_auc),
         "pr_auc": float(pr_auc), "error_rate": float(error_rate),
         "false_alarm_rate": float(false_alarm_rate),
+        "optimal_threshold": optimal_threshold,
+        "optimal_threshold_f1": optimal_f1,
         "fps_single": float(fps_single), "latency_ms": float(latency_ms),
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
         "total_samples": len(y_true),
@@ -826,7 +835,17 @@ else:
     with open(LOG_DIR / 'evaluation_metrics.json', 'w') as f:
         json.dump(metrics, f, indent=2)
 
+    # Save threshold_config.json for GUI usage
+    threshold_config = {
+        "optimal_threshold": optimal_threshold,
+        "optimal_threshold_f1": optimal_f1,
+        "model_path": str(MODEL_PATH)
+    }
+    with open(LOG_DIR / 'threshold_config.json', 'w') as f:
+        json.dump(threshold_config, f, indent=2)
+
     print(f"\n✓ Saved: {LOG_DIR / 'evaluation_metrics.json'}")
+    print(f"✓ Saved: {LOG_DIR / 'threshold_config.json'}")
     print("=" * 70)
 ```
 
