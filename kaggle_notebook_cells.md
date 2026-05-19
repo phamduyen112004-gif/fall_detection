@@ -794,7 +794,7 @@ print(f"\n✓ Training complete!")
 print(f"✓ Model saved: {MODEL_DIR / 'best_model.pth'}")
 ```
 
-## Cell 5: Evaluate Model (with Plots & FPS)
+## Cell 5: Evaluate Model (Full Benchmark Metrics)
 
 ```python
 import torch
@@ -802,7 +802,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.metrics import (
+    confusion_matrix, classification_report, roc_curve, auc,
+    precision_recall_curve, average_precision_score,
+    matthews_corrcoef, cohen_kappa_score, balanced_accuracy_score,
+    f1_score, precision_score, recall_score
+)
 from pathlib import Path
 
 # Config
@@ -850,34 +855,91 @@ else:
             all_preds.extend(preds.tolist())
             all_labels.extend(y[i:i+64].tolist())
     
-    # ========== METRICS ==========
-    cm = confusion_matrix(all_labels, all_preds)
-    fpr, tpr, _ = roc_curve(all_labels, all_probs)
-    roc_auc = auc(fpr, tpr)
-    precision, recall, _ = precision_recall_curve(all_labels, all_probs)
-    ap = average_precision_score(all_labels, all_probs)
+    y_true = np.array(all_labels)
+    y_pred = np.array(all_preds)
+    y_scores = np.array(all_probs)
     
-    tn, fp, fn, tp = cm.ravel()
-    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0  # Recall/Sensitivity/True Positive Rate
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+    # ========== CONFUSION MATRIX ==========
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     
-    print("=" * 60)
-    print("EVALUATION RESULTS")
-    print("=" * 60)
-    print(classification_report(all_labels, all_preds, target_names=['No Fall', 'Fall'], digits=4))
-    print(f"\nConfusion Matrix:")
-    print(f"  TN={tn}, FP={fp}")
-    print(f"  FN={fn}, TP={tp}")
-    print(f"\nAdditional Metrics:")
-    print(f"  Sensitivity (TPR): {sensitivity:.4f}")
-    print(f"  Specificity (TNR): {specificity:.4f}")
-    print(f"  ROC AUC:           {roc_auc:.4f}")
-    print(f"  PR AP:             {ap:.4f}")
+    # ========== BASIC METRICS ==========
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0  # Recall / TPR
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0  # TNR / Selectivity
+    f1 = 2 * precision * sensitivity / (precision + sensitivity) if (precision + sensitivity) > 0 else 0
     
-    # ========== FPS ==========
-    print("\n" + "=" * 60)
+    # ========== ADVANCED METRICS (for paper comparison) ==========
+    # Balanced Accuracy
+    balanced_acc = balanced_accuracy_score(y_true, y_pred)
+    
+    # G-Mean: geometric mean of sensitivity and specificity
+    g_mean = np.sqrt(sensitivity * specificity)
+    
+    # Matthews Correlation Coefficient
+    mcc = matthews_corrcoef(y_true, y_pred)
+    
+    # Cohen's Kappa
+    kappa = cohen_kappa_score(y_true, y_pred)
+    
+    # Error Rate
+    error_rate = (fp + fn) / (tp + tn + fp + fn)
+    
+    # Fall Detection Rate (Sensitivity) & False Alarm Rate (1-Specificity)
+    fall_detection_rate = sensitivity
+    false_alarm_rate = 1 - specificity
+    
+    # ROC AUC & PR AUC
+    fpr_roc, tpr_roc, _ = roc_curve(y_true, y_scores)
+    roc_auc = auc(fpr_roc, tpr_roc)
+    precision_arr, recall_arr, _ = precision_recall_curve(y_true, y_scores)
+    pr_auc = average_precision_score(y_true, y_scores)
+    
+    # F2 Score (emphasize recall more than precision - important for fall detection)
+    f2 = f1_score(y_true, y_pred, beta=2)
+    
+    # Youden's J statistic (optimal threshold selection)
+    youden_j = sensitivity + specificity - 1
+    
+    # ========== DISPLAY ==========
+    print("=" * 70)
+    print("FULL EVALUATION RESULTS - FOR PAPER COMPARISON")
+    print("=" * 70)
+    print(f"\n{'METRIC':<35} {'VALUE':<15} {'DESCRIPTION'}")
+    print("-" * 70)
+    print(f"{'Accuracy':<35} {accuracy:.4f}         Overall correctness")
+    print(f"{'Precision (PPV)':<35} {precision:.4f}         Positive predictive value")
+    print(f"{'Recall / Sensitivity (TPR)':<35} {sensitivity:.4f}         Fall detection rate")
+    print(f"{'Specificity (TNR)':<35} {specificity:.4f}         True negative rate")
+    print(f"{'F1-Score':<35} {f1:.4f}         Harmonic mean P & R")
+    print(f"{'F2-Score':<35} {f2:.4f}         Emphasize recall (beta=2)")
+    print(f"{'Balanced Accuracy':<35} {balanced_acc:.4f}         Mean of TPR & TNR")
+    print(f"{'G-Mean':<35} {g_mean:.4f}         Geometric mean of TPR & TNR")
+    print(f"{'MCC (Matthews)':<35} {mcc:.4f}         Correlation coefficient")
+    print(f"{'Cohen Kappa':<35} {kappa:.4f}         Agreement measure")
+    print(f"{'ROC AUC':<35} {roc_auc:.4f}         ROC area under curve")
+    print(f"{'PR AUC (AP)':<35} {pr_auc:.4f}         PR area under curve")
+    print(f"{'Error Rate':<35} {error_rate:.4f}         (FP + FN) / Total")
+    print(f"{'Fall Detection Rate':<35} {fall_detection_rate:.4f}         Same as Sensitivity")
+    print(f"{'False Alarm Rate':<35} {false_alarm_rate:.4f}         1 - Specificity")
+    print(f"{'Youden J':<35} {youden_j:.4f}         Optimal threshold metric")
+    print("-" * 70)
+    
+    print("\nConfusion Matrix:")
+    print(f"                Predicted")
+    print(f"             No Fall  Fall")
+    print(f"Actual No Fall  {tn:<8} {fp}")
+    print(f"       Fall    {fn:<8} {tp}")
+    print("-" * 70)
+    
+    # Classification Report
+    print("\nClassification Report:")
+    print(classification_report(y_true, y_pred, target_names=['No Fall', 'Fall'], digits=4))
+    
+    # ========== FPS BENCHMARK ==========
+    print("\n" + "=" * 70)
     print("INFERENCE SPEED (FPS)")
-    print("=" * 60)
+    print("=" * 70)
     
     # Warmup
     dummy = torch.FloatTensor(1, 60, 60).to(device)
@@ -885,7 +947,7 @@ else:
         _ = model(dummy)
     
     # Benchmark
-    n_runs = 100
+    n_runs = 200
     start = time.time()
     for _ in range(n_runs):
         batch = torch.FloatTensor(32, 60, 60).to(device)
@@ -893,67 +955,122 @@ else:
     elapsed = time.time() - start
     
     fps_batch = n_runs * 32 / elapsed
-    fps_single = 1 / (elapsed / n_runs / 32)
+    latency_ms = (elapsed / n_runs / 32) * 1000
     
-    print(f"Batch size 32: {fps_batch:.1f} samples/sec ({fps_batch/32:.1f} iters/sec)")
-    print(f"Single sample: {fps_single:.1f} FPS")
+    print(f"Batch size 32: {fps_batch:.1f} samples/sec")
+    print(f"Latency: {latency_ms:.2f} ms per sample")
+    print(f"Throughput: {n_runs * 32 / elapsed:.1f} frames/sec @ batch=32")
     
     # ========== PLOTS ==========
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     
     # 1. Confusion Matrix
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0],
-                xticklabels=['No Fall', 'Fall'], yticklabels=['No Fall', 'Fall'])
-    axes[0].set_xlabel('Predicted')
-    axes[0].set_ylabel('Actual')
-    axes[0].set_title('Confusion Matrix')
+    cm = confusion_matrix(y_true, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0,0],
+                xticklabels=['No Fall', 'Fall'], yticklabels=['No Fall', 'Fall'],
+                annot_kws={'size': 14})
+    axes[0,0].set_xlabel('Predicted', fontsize=12)
+    axes[0,0].set_ylabel('Actual', fontsize=12)
+    axes[0,0].set_title('Confusion Matrix', fontsize=14)
     
     # 2. ROC Curve
-    axes[1].plot(fpr, tpr, 'b-', linewidth=2, label=f'ROC (AUC = {roc_auc:.4f})')
-    axes[1].plot([0, 1], [0, 1], 'k--', linewidth=1)
-    axes[1].set_xlabel('False Positive Rate')
-    axes[1].set_ylabel('True Positive Rate')
-    axes[1].set_title('ROC Curve')
-    axes[1].legend(loc='lower right')
-    axes[1].grid(True, alpha=0.3)
+    axes[0,1].plot(fpr_roc, tpr_roc, 'b-', linewidth=2, label=f'ROC (AUC = {roc_auc:.4f})')
+    axes[0,1].plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random')
+    axes[0,1].fill_between(fpr_roc, tpr_roc, alpha=0.2)
+    axes[0,1].set_xlabel('False Positive Rate', fontsize=12)
+    axes[0,1].set_ylabel('True Positive Rate', fontsize=12)
+    axes[0,1].set_title('ROC Curve', fontsize=14)
+    axes[0,1].legend(loc='lower right')
+    axes[0,1].grid(True, alpha=0.3)
     
     # 3. Precision-Recall Curve
-    axes[2].plot(recall, precision, 'g-', linewidth=2, label=f'PR (AP = {ap:.4f})')
-    axes[2].axhline(y=np.sum(y)/len(y), color='r', linestyle='--', label='Baseline')
-    axes[2].set_xlabel('Recall')
-    axes[2].set_ylabel('Precision')
-    axes[2].set_title('Precision-Recall Curve')
-    axes[2].legend(loc='lower left')
-    axes[2].grid(True, alpha=0.3)
+    baseline = np.sum(y_true) / len(y_true)
+    axes[1,0].plot(recall_arr, precision_arr, 'g-', linewidth=2, label=f'PR (AP = {pr_auc:.4f})')
+    axes[1,0].axhline(y=baseline, color='r', linestyle='--', label=f'Baseline ({baseline:.2f})')
+    axes[1,0].set_xlabel('Recall', fontsize=12)
+    axes[1,0].set_ylabel('Precision', fontsize=12)
+    axes[1,0].set_title('Precision-Recall Curve', fontsize=14)
+    axes[1,0].legend(loc='lower left')
+    axes[1,0].grid(True, alpha=0.3)
+    
+    # 4. Metrics Bar Chart
+    metrics_names = ['Acc', 'Prec', 'Sens', 'Spec', 'F1', 'AUC']
+    metrics_values = [accuracy, precision, sensitivity, specificity, f1, roc_auc]
+    colors = ['#2ecc71', '#3498db', '#e74c3c', '#9b59b6', '#f39c12', '#1abc9c']
+    bars = axes[1,1].bar(metrics_names, metrics_values, color=colors, edgecolor='black')
+    axes[1,1].set_ylim(0, 1.1)
+    axes[1,1].set_ylabel('Score', fontsize=12)
+    axes[1,1].set_title('Performance Metrics Summary', fontsize=14)
+    axes[1,1].axhline(y=1.0, color='gray', linestyle='--', alpha=0.5)
+    for bar, val in zip(bars, metrics_values):
+        axes[1,1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
+                       f'{val:.3f}', ha='center', va='bottom', fontsize=10)
     
     plt.tight_layout()
     plt.savefig(LOG_DIR / 'evaluation_results.png', dpi=150, bbox_inches='tight')
     plt.show()
     print(f"\n✓ Plot saved to: {LOG_DIR / 'evaluation_results.png'}")
     
-    # ========== SAVE METRICS ==========
+    # ========== SAVE METRICS JSON ==========
     import json
     metrics = {
-        "accuracy": float((tp + tn) / (tp + tn + fp + fn)),
-        "precision": float(tp / (tp + fp)) if (tp + fp) > 0 else 0,
-        "recall": float(sensitivity),
+        # Standard metrics
+        "accuracy": float(accuracy),
+        "precision": float(precision),
+        "recall_sensitivity": float(sensitivity),
         "specificity": float(specificity),
-        "f1": float(2 * tp / (2 * tp + fp + fn)) if (2 * tp + fp + fn) > 0 else 0,
+        "f1_score": float(f1),
+        "f2_score": float(f2),
+        # Advanced metrics for paper
+        "balanced_accuracy": float(balanced_acc),
+        "g_mean": float(g_mean),
+        "mcc": float(mcc),
+        "cohen_kappa": float(kappa),
         "roc_auc": float(roc_auc),
-        "average_precision": float(ap),
-        "confusion_matrix": cm.tolist(),
+        "pr_auc_average_precision": float(pr_auc),
+        # Confusion matrix elements
+        "true_positives": int(tp),
+        "true_negatives": int(tn),
+        "false_positives": int(fp),
+        "false_negatives": int(fn),
+        # Detection rates
+        "fall_detection_rate": float(fall_detection_rate),
+        "false_alarm_rate": float(false_alarm_rate),
+        "error_rate": float(error_rate),
+        "youden_j": float(youden_j),
+        # Speed
         "fps_batch_32": float(fps_batch),
-        "fps_single": float(fps_single),
-        "total_samples": len(y),
-        "fall_samples": int(np.sum(y == 1)),
-        "nofall_samples": int(np.sum(y == 0))
+        "latency_ms": float(latency_ms),
+        # Dataset info
+        "total_samples": len(y_true),
+        "fall_samples": int(np.sum(y_true == 1)),
+        "nofall_samples": int(np.sum(y_true == 0)),
+        "class_ratio": float(np.sum(y_true == 1) / np.sum(y_true == 0))
     }
     
     with open(LOG_DIR / 'final_metrics.json', 'w') as f:
         json.dump(metrics, f, indent=2)
     
     print(f"\n✓ Metrics saved to: {LOG_DIR / 'final_metrics.json'}")
-    print("=" * 60)
+    
+    # ========== COMPARISON TEMPLATE ==========
+    print("\n" + "=" * 70)
+    print("COMPARISON WITH OTHER PAPERS (copy this table)")
+    print("=" * 70)
+    print(f"""
+| Metric           | This Work | Paper 1 | Paper 2 | Paper 3 |
+|------------------|-----------|---------|---------|---------|
+| Accuracy         | {accuracy:.4f}     |         |         |         |
+| Precision        | {precision:.4f}     |         |         |         |
+| Sensitivity/Recall| {sensitivity:.4f}     |         |         |         |
+| Specificity      | {specificity:.4f}     |         |         |         |
+| F1-Score         | {f1:.4f}     |         |         |         |
+| ROC AUC          | {roc_auc:.4f}     |         |         |         |
+| MCC              | {mcc:.4f}     |         |         |         |
+| Cohen's Kappa    | {kappa:.4f}     |         |         |         |
+| FPS              | {fps_batch:.1f}     |         |         |         |
+""")
+    print("=" * 70)
 ```
 
 ## Cell 6: Save Results
