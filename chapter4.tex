@@ -64,6 +64,27 @@ Ablation study và phân tích kết quả cho thấy:
     \item \textbf{Tổng hợp và so sánh hệ thống}: Xây dựng bảng so sánh toàn diện giữa các phương pháp phát hiện té ngã theo nhiều tiêu chí (loại dữ liệu, accuracy, Edge AI, privacy), xác định rõ khoảng trống nghiên cứu mà đề tài hướng đến.
 \end{enumerate}
 
+\subsection{Ưu điểm nổi bật của hệ thống so với các phương pháp hiện có}
+\label{sec:advantages}
+
+Hệ thống HybridFallTransformer đề xuất sở hữu nhiều ưu điểm vượt trội so với các phương pháp phát hiện té ngã truyền thống:
+
+\begin{itemize}
+    \item \textbf{So với phương pháp dựa trên ảnh (Image-based methods)}: Các phương pháp 3D-CNN và Two-Stream ConvNet yêu cầu xử lý trực tiếp trên khung hình RGB, dẫn đến chi phí tính toán cao (hàng trăm GFLOPs) và khó triển khai trên thiết bị biên. Hệ thống đề xuất chỉ xử lý vector tọa độ 17 điểm khớp (2048 bytes/frame thay vì hàng megabytes cho ảnh), giảm đáng kể băng thông và chi phí lưu trữ.
+    
+    \item \textbf{So với phương pháp dựa trên chuyển động (Motion-based methods)}: Các phương pháp Motion History Image (MHI) và Optical Flow chỉ nắm bắt được chuyển động thô, dễ bị nhiễu bởi thay đổi ánh sáng và không phân biệt được loại hoạt động cụ thể. Hệ thống đề xuất với PIFR biểu diễn đặc trưng hình học-động học 60 chiều, cho phép phân biệt rõ ràng giữa té ngã và các hoạt động thường ngày (ADL) có motion tương tự.
+    
+    \item \textbf{So với các mô hình tuần tự truyền thống (LSTM/GRU)}: Mặc dù LSTM và GRU có khả năng nắm bắt phụ thuộc thời gian, chúng xử lý chuỗi theo cơ chế tuần tự (recurrent), không thể song song hóa và khó hội tụ với chuỗi dài. Kiến trúc Transformer với Self-Attention cho phép nắm bắt đồng thời mối quan hệ giữa tất cả các khung hình, đặc biệt hiệu quả khi sự kiện té ngã diễn ra nhanh trong 10-15 khung hình liên tiếp.
+    
+    \item \textbf{So với phương pháp học máy truyền thống (SVM/Random Forest)}: Các phương pháp này thường sử dụng đặc trưng thủ công được trích xuất từ dữ liệu huấn luyện, dễ overfitting và khó tổng quát hóa cho dữ liệu mới. Hệ thống đề xuất kết hợp đặc trưng xác định (PIFR) với học biểu diễn sâu (Transformer), vừa đảm bảo tính ổn định vừa có khả năng tổng quát hóa cao.
+    
+    \item \textbf{So với phương pháp Graph Convolutional Network (GCN)}: Mặc dù GCN xử lý tốt cấu trúc không gian của khung xương, chúng yêu cầu xây dựng graph topology cố định và tính toán phức tạp. Kiến trúc Transformer không phụ thuộc vào topology cố định, linh hoạt hơn trong việc học các mối quan hệ tiềm ẩn giữa các khớp.
+    
+    \item \textbf{Về khả năng bảo vệ quyền riêng tư (Privacy)}: Hệ thống hoạt động hoàn toàn trên vector tọa độ, không lưu trữ hay truyền tải hình ảnh RGB của người dùng. Điều này tuân thủ nguyên tắc privacy-by-design, phù hợp triển khai trong bệnh viện, viện dưỡng lão -- nơi lưu trữ hình ảnh bệnh nhân bị hạn chế bởi GDPR và các quy định bảo vệ dữ liệu cá nhân.
+    
+    \item \textbf{Về khả năng triển khai Edge AI}: Với kích thước mô hình ~7-10MB và FPS đạt 8-12 trên Raspberry Pi 4, hệ thống vượt trội so với các mô hình 3D-CNN (thường >500MB) cần GPU rời. Module Telegram Alert tích hợp cho phép gửi cảnh báo tức thời mà không cần server trung tâm, phù hợp cho các hộ gia đình hoặc cơ sở y tế quy mô nhỏ.
+\end{itemize}
+
 \subsection{Đóng góp thực tiễn}
 \label{sec:practical_contributions}
 
@@ -122,40 +143,93 @@ Dựa trên các hạn chế đã nhận diện, đề tài đề xuất ba hư�
 \subsection{Tối ưu mô hình và Edge AI}
 \label{sec:future_edge}
 
+Dựa trên kết quả đánh giá hiện tại (8-12 FPS trên Raspberry Pi 4) và mục tiêu đạt tốc độ thời gian thực hoàn chỉnh, các hướng tối ưu hóa sau được đề xuất:
+
 \begin{enumerate}
-    \item \textbf{Quantization và Pruning}: Áp dụng các kỹ thuật nén mô hình như INT8 quantization và structured pruning để giảm kích thước và tăng tốc độ suy luận trên thiết bị biên.
+    \item \textbf{Quantization và Pruning}: Áp dụng INT8 quantization thay vì float32 hiện tại để giảm kích thước mô hình xuống 4 lần mà không gây suy giảm đáng kể về độ chính xác. Structured pruning trên các attention heads ít quan trọng có thể giảm số lượng tham số mà vẫn duy trì khả năng nắm bắt phụ thuộc thời gian.
     
-    \item \textbf{Tối ưu cho Edge}: Sử dụng TensorRT hoặc ONNX Runtime để tối ưu hóa mô hình trên thiết bị Edge, hướng tới đạt 30+ FPS trên Raspberry Pi.
+    \item \textbf{Tối ưu Inference với TensorRT/ONNX Runtime}: Chuyển đổi mô hình PyTorch sang TensorRT engine cho NVIDIA GPU hoặc ONNX Runtime cho CPU/Edge device. Kỳ vọng tăng từ 8-12 FPS lên 20-30 FPS trên Raspberry Pi 4.
     
-    \item \textbf{Edge-Cloud Hybrid}: Thiết kế kiến trúc hybrid cho phép xử lý trên Edge khi điều kiện mạng không thuận lợi, tự động chuyển lên Cloud khi cần tăng cường độ chính xác.
+    \item \textbf{Edge-Cloud Hybrid Architecture}: Thiết kế cơ chế chuyển đổi linh hoạt giữa xử lý cục bộ (Edge) và đám mây (Cloud) dựa trên:
+    \begin{itemize}
+        \item Chất lượng kết nối mạng: khi mạng ổn định, gửi raw skeleton data lên Cloud để chạy mô hình lớn hơn
+        \item Yêu cầu độ chính xác: mô hình Cloud có thể là GCN ensemble với accuracy >90\%
+        \item Tiết kiệm năng lượng: Edge khi pin yếu hoặc thiết bị di động
+    \end{itemize}
     
-    \item \textbf{Kết hợp với TinyML}: Nghiên cứu khả năng triển khai mô hình nhẹ hơn nữa trên vi điều khiển IoT.
+    \item \textbf{TinyML trên vi điều khiển IoT}: Khảo sát khả năng chạy mô hình đã nén (sau quantization) trên ESP32 hoặc STM32 với TensorFlow Lite for Microcontrollers, mở ra triển khai trên các thiết bị IoT giá rẻ.
 \end{enumerate}
 
 \subsection{Mở rộng bài toán và dữ liệu}
 \label{sec:future_data}
 
+Với bộ dữ liệu hiện tại gồm 651 mẫu và nhãn nhị phân (Fall/ADL), việc mở rộng sẽ cải thiện độ tổng quát hóa và cung cấp thông tin chi tiết hơn cho ứng dụng thực tế:
+
 \begin{enumerate}
-    \item \textbf{Bộ dữ liệu thực tế}: Thu thập thêm dữ liệu từ môi trường bệnh viện, viện dưỡng lão và hộ gia đình với sự đồng ý của người tham gia. Tập trung vào các tình huống khó như ánh sáng yếu, occlusion một phần, nhiều người trong khung hình.
+    \item \textbf{Bổ sung dữ liệu từ môi trường thực tế}:
+    \begin{itemize}
+        \item Thu thập 500-1000 mẫu từ phòng bệnh nhân và hành lang bệnh viện tại Việt Nam
+        \item Tập trung vào các tình huống khó: ánh sáng fluorescent nhấp nháy, occlusion một phần (giường, ghế), người ngồi xe lăn
+        \item Bổ sung dữ liệu người cao tuổi (>70 tuổi) với tốc độ di chuyển chậm, khác biệt so với dữ liệu trẻ trung trong CaucaFall
+    \end{itemize}
     
-    \item \textbf{Mở rộng phân loại đa lớp}: Thay vì phân loại nhị phân (Fall/ADL), mở rộng thành phân loại đa lớp với các nhãn: Standing, Walking, Sitting, Lying, Bending, Falling Forward, Falling Backward, Slipping -- cung cấp thông tin chi tiết hơn về tình huống cho đội ngũ y tế.
+    \item \textbf{Phân loại đa lớp thay vì nhị phân}: Mở rộng từ Fall/ADL sang phân loại 8 lớp:
+    \begin{itemize}
+        \item \textit{Static poses}: Standing, Sitting, Lying
+        \item \textit{Dynamic ADL}: Walking, Bending, Picking up objects
+        \item \textit{Fall types}: Falling Forward, Falling Backward, Slipping
+    \end{itemize}
+    Việc phân biệt loại té ngã giúp đội ngũ y tế ước tính mức độ chấn thương (ngã về phía trước có thể gây chấn thương đầu nghiêm trọng hơn).
     
-    \item \textbf{Xử lý multi-person}: Nghiên cứu kiến trúc xử lý đồng thời nhiều người trong khung hình, phù hợp với môi trường bệnh viện có nhiều bệnh nhân.
+    \item \textbf{Xử lý multi-person cho môi trường bệnh viện}: 
+    \begin{itemize}
+        \item Hiện tại hệ thống chọn người có confidence cao nhất khi có nhiều người
+        \item Mở rộng để track và phân loại đồng thời 2-4 người trong khung hình
+        \item Quan trọng cho phòng bệnh viện có nhiều bệnh nhân hoặc người thăm
+    \end{itemize}
     
-    \item \textbf{Data Augmentation}: Áp dụng các kỹ thuật augmentation cho dữ liệu skeleton để tăng tính đa dạng và robust của mô hình.
+    \item \textbf{Data Augmentation cho skeleton}:
+    \begin{itemize}
+        \item \textit{Temporal augmentation}: Thêm/bớt frames để mô phỏng camera FPS khác nhau
+        \item \textit{Spatial augmentation}: Noise thêm vào tọa độ khớp, thay đổi scale
+        \item \textit{Physics-based augmentation}: Mô phỏng occlusion bằng cách ẩn random joints
+    \end{itemize}
 \end{enumerate}
 
 \subsection{Học liên kết và AI giải thích được}
 \label{sec:future_federated_xai}
 
+Với bối cảnh dữ liệu y tế nhạy cảm và yêu cầu giải thích quyết định trong môi trường lâm sàng:
+
 \begin{enumerate}
-    \item \textbf{Federated Learning}: Triển khai học liên kết (Federated Learning) cho phép huấn luyện mô hình trên dữ liệu phân tán từ nhiều cơ sở y tế mà không cần tập trung dữ liệu về một server trung tâm, đồng thời bảo vệ quyền riêng tư của bệnh nhân.
+    \item \textbf{Federated Learning cho dữ liệu phân tán}:
+    \begin{itemize}
+        \item Mỗi cơ sở y tế (bệnh viện, viện dưỡng lão) giữ dữ liệu cục bộ
+        \item Chỉ gửi gradient updates lên server trung tâm, không gửi raw data
+        \item Áp dụng differential privacy để tăng cường bảo mật
+    \end{itemize}
     
-    \item \textbf{XAI cho Fall Detection}: Tích hợp các phương pháp AI giải thích được (Explainable AI) như Grad-CAM, Attention Visualization để hiểu được mô hình tập trung vào đâu khi đưa ra quyết định. Điều này quan trọng trong môi trường y tế để tăng độ tin tưởng của nhân viên y tế vào hệ thống.
+    \item \textbf{XAI cho Fall Detection}:
+    \begin{itemize}
+        \item \textit{Attention weight visualization}: Hiển thị khung hình nào trong chuỗi 60 frames mà mô hình tập trung nhiều nhất
+        \item \textit{Skeleton heatmap}: Tô màu các khớp có đóng góp lớn vào quyết định (ví dụ: đầu, hông thường quan trọng trong fall detection)
+        \item \textit{Counterfactual explanation}: Giải thích "nếu không có frame X thì kết quả sẽ khác"
+    \end{itemize}
+    Mục tiêu: tăng độ tin tưởng của nhân viên y tế, hỗ trợ debug khi có false positive/negative.
     
-    \item \textbf{Online Learning}: Nghiên cứu khả năng học trực tuyến (online learning) cho phép hệ thống cập nhật trọng số từ các trường hợp mới mà không cần huấn luyện lại toàn bộ, thích ứng với đặc điểm di chuyển của từng bệnh nhân cụ thể.
+    \item \textbf{Online Learning cho personalization}:
+    \begin{itemize}
+        \item Cho phép hệ thống fine-tune trên dữ liệu của từng bệnh nhân sau khi triển khai
+        \item Mỗi bệnh nhân có đặc điểm di chuyển khác nhau (người đi từ từ vs người nhanh nhẹn)
+        \item Cập nhật weight mà không cần huấn luyện lại toàn bộ (meta-learning)
+    \end{itemize}
     
-    \item \textbf{Kiến trúc Attention nâng cao}: Cải thiện kiến trúc Transformer bằng cách thử nghiệm các cơ chế Attention khác như Longformer, Linformer để xử lý chuỗi dài hơn hoặc giảm độ phức tạp tính toán.
+    \item \textbf{Cải thiện kiến trúc Transformer}:
+    \begin{itemize}
+        \item Thử nghiệm \textit{Longformer/BigBird} để xử lý chuỗi dài hơn (90-120 frames) cho các cú té ngã kéo dài
+        \item Kết hợp \textit{Cross-attention} giữa skeleton sequence và camera context (góc nhìn, chiều cao camera)
+        \item \textit{Lightweight attention} như Linformer để giảm O(n²) xuống O(n) cho Edge deployment
+    \end{itemize}
 \end{enumerate}
 
 %-------------------------------------------------

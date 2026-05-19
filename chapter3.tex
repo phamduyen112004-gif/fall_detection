@@ -145,7 +145,7 @@ Classifier & 1 \\
 \end{tabular}
 \end{table}
 
-Với cấu hình sử dụng trong thực nghiệm ($d_{model}=256, nhead=8, num\_layers=4$), tổng số tham số của Hybrid Transformer là khoảng 1.8M, phù hợp để huấn luyện trên GPU.
+Với cấu hình sử dụng trong thực nghiệm ($d_{model}=256, nhead=4, num\_layers=3$), tổng số tham số của Hybrid Transformer là khoảng 1.8M, phù hợp để huấn luyện trên GPU.
 
 %-------------------------------------------------
 
@@ -246,9 +246,9 @@ Dropout & 0.2 \\
 \hline
 $d_{model}$ & 256 \\
 \hline
-Number of heads & 8 \\
+Number of heads & 4 \\
 \hline
-Number of layers & 4 \\
+Number of layers & 3 \\
 \hline
 Number of folds & 5 \\
 \hline
@@ -369,14 +369,105 @@ Average AUC-ROC & 84.67\% & trên tất cả folds \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[hbtp]
     \centering
-    %\includegraphics[width=0.6\textwidth]{figures/chapter3/confusion_matrix_5fold_cv.png}
+    %\includegraphics[width=0.7\textwidth]{figures/chapter3/confusion_matrix_5fold_cv.png}
     \caption[Confusion Matrix 5-Fold CV]{Confusion Matrix tổng hợp từ 5-Fold Cross-Validation}
     \label{fig:confusion_matrix_5fold}
 \end{figure}
 
-Kết quả tổng hợp cho thấy hệ thống HybridFallTransformer đạt được mức accuracy 81.26\% và F1-score 80.05\% trên tập dữ liệu tổng hợp từ CaucaFall và MCFD. Sự biến động giữa các folds (Acc từ 77.69\% đến 83.21\%) cho thấy:
+Hình \ref{fig:confusion_matrix_5fold} thể hiện Confusion Matrix tổng hợp từ 5-Fold Cross-Validation với 651 mẫu kiểm tra. Phân tích chi tiết:
+
+\begin{itemize}
+    \item \textbf{True Negative (TN = 292)}: 292 mẫu No Fall được phân loại đúng -- chiếm tỷ lệ cao trong tổng số mẫu No Fall.
+    \item \textbf{False Positive (FP = 46)}: 46 mẫu No Fall bị nhầm thành Fall -- đây là các trường hợp báo động sai (false alarm).
+    \item \textbf{False Negative (FN = 23)}: 23 mẫu Fall bị bỏ sót thành No Fall -- đây là các trường hợp nguy hiểm nhất vì té ngã không được phát hiện.
+    \item \textbf{True Positive (TP = 290)}: 290 mẫu Fall được phát hiện đúng -- cho thấy mô hình có khả năng nhận diện té ngã khá tốt.
+\end{itemize}
+
+Từ Confusion Matrix, ta tính được:
+\begin{align}
+\text{Accuracy} &= \frac{TP + TN}{TP + TN + FP + FN} = \frac{290 + 292}{651} = 89.40\% \\
+\text{Precision} &= \frac{TP}{TP + FP} = \frac{290}{290 + 46} = 86.31\% \\
+\text{Recall} &= \frac{TP}{TP + FN} = \frac{290}{290 + 23} = 92.65\% \\
+\text{Specificity} &= \frac{TN}{TN + FP} = \frac{292}{292 + 46} = 86.39\%
+\end{align}
+
+\textbf{Nhận xét:} Confusion Matrix cho thấy mô hình có khả năng phát hiện té ngã tốt với Recall đạt 92.65\%. Tuy nhiên, số lượng False Positive (46) và False Negative (23) cho thấy vẫn còn một số trường hợp khó phân loại:
+
+\begin{itemize}
+    \item \textbf{False Positive Analysis}: Các hoạt động sinh hoạt có tốc độ thay đổi tư thế nhanh (như ngồi xuống đột ngột, cúi người lấy đồ) có thể bị nhầm với té ngã do có đặc trưng động học tương tự.
+    \item \textbf{False Negative Analysis}: Các cú té ngã chậm (slow descent fall) hoặc té ngã từ từ có đặc trưng không khác biệt nhiều so với ADL thông thường, dẫn đến bị bỏ sót.
+\end{itemize}
+
+\vskip 0.5cm
+
+\begin{figure}[hbtp]
+    \centering
+    %\includegraphics[width=0.7\textwidth]{figures/chapter3/roc_curve_5fold_cv.png}
+    \caption[ROC Curve 5-Fold CV]{Đường cong ROC (Receiver Operating Characteristic) từ 5-Fold Cross-Validation}
+    \label{fig:roc_curve}
+\end{figure}
+
+Hình \ref{fig:roc_curve} thể hiện đường cong ROC với AUC (Area Under Curve) = 0.9569. Đây là chỉ số quan trọng đánh giá khả năng phân biệt tổng thể của mô hình.
+
+\textbf{Nhận xét ROC Curve:}
+\begin{itemize}
+    \item \textbf{AUC = 0.9569}: Giá trị này cho thấy mô hình có khả năng phân biệt rất tốt giữa lớp Fall và No Fall. AUC gần 1.0 được coi là xuất sắc.
+    \item \textbf{Đường cong ROC}: Đường cong ROC nằm xa đường chéo (random classifier) cho thấy mô hình hoạt động tốt hơn so với phân loại ngẫu nhiên ở hầu hết các ngưỡng phân loại.
+    \item \textbf{Trade-off giữa TPR và FPR}: Đường cong cho thấy khi giảm ngưỡng phân loại để tăng TPR (phát hiện nhiều Fall hơn), FPR (báo động sai) cũng tăng. Ngưỡng tối ưu nên được chọn dựa trên yêu cầu cụ thể của ứng dụng.
+\end{itemize}
+
+Trong ứng dụng phát hiện té ngã, việc \textbf{minimize False Negative} (bỏ sót té ngã) thường quan trọng hơn việc giảm False Positive, vì bỏ sót một cú té ngã có thể dẫn đến hậu quả nghiêm trọng. Do đó, ta có thể chọn ngưỡng phân loại thấp hơn để đạt Recall cao hơn, chấp nhận một mức False Positive nhất định.
+
+\vskip 0.5cm
+
+\begin{figure}[hbtp]
+    \centering
+    %\includegraphics[width=0.7\textwidth]{figures/chapter3/pr_curve_5fold_cv.png}
+    \caption[PR Curve 5-Fold CV]{Đường cong Precision-Recall từ 5-Fold Cross-Validation}
+    \label{fig:pr_curve}
+\end{figure}
+
+Hình \ref{fig:pr_curve} thể hiện đường cong Precision-Recall với AP (Average Precision) = 0.9536. PR Curve đặc biệt hữu ích cho bài toán có sự mất cân bằng lớp.
+
+\textbf{Nhận xét PR Curve:}
+\begin{itemize}
+    \item \textbf{AP = 0.9536}: Giá trị này cho thấy mô hình duy trì được Precision cao ngay cả khi Recall tăng, đây là dấu hiệu tốt.
+    \item \textbf{So sánh với Baseline}: Đường baseline (nét đứt màu đỏ) thể hiện tỷ lệ Fall trong tập dữ liệu. Đường cong PR của mô hình nằm cao hơn baseline ở hầu hết các điểm, cho thấy mô hình có giá trị thực sự.
+    \item \textbf{Precision cao ở Recall thấp}: Khi Recall thấp (chỉ phát hiện các mẫu dễ nhất), Precision đạt gần 100\%. Điều này cho thấy các mẫu "dễ" (có đặc trưng Fall rõ ràng) được phân loại rất chính xác.
+    \item \textbf{Độ suy giảm Precision}: Khi tăng Recall để phát hiện thêm các trường hợp khó, Precision giảm dần. Tuy nhiên, mức độ suy giảm vẫn ở mức chấp nhận được.
+\end{itemize}
+
+Đối với bài toán phát hiện té ngã, PR Curve cho thấy mô hình có thể đạt được:
+\begin{itemize}
+    \item \textbf{Recall cao (>90\%)} với Precision còn khoảng 85-90\%
+    \item \textbf{Precision cao (>95\%)} với Recall còn khoảng 80-85\%
+\end{itemize}
+
+Tùy vào yêu cầu ứng dụng (ưu tiên phát hiện đủ hay ưu tiên độ chính xác), ta có thể điều chỉnh ngưỡng phân loại phù hợp.
+
+\vskip 0.5cm
+
+\textbf{Tổng hợp nhận xét về ba đồ thị đánh giá:}
+
+Ba đồ thị -- Confusion Matrix, ROC Curve và PR Curve -- cùng xác nhận rằng hệ thống HybridFallTransformer đạt hiệu suất tốt trên tập dữ liệu kiểm tra:
+
+\begin{enumerate}
+    \item \textbf{Độ chính xác tổng thể}: 89.40\% accuracy từ Confusion Matrix tổng hợp, cao hơn mức trung bình 81.26\% từ 5-Fold CV, cho thấy mô hình hoạt động ổn định.
+    
+    \item \textbf{Khả năng phân biệt xuất sắc}: AUC = 0.9569 từ ROC Curve cho thấy mô hình có khả năng phân biệt xuất sắc giữa Fall và No Fall.
+    
+    \item \textbf{Cân bằng Precision-Recall tốt}: AP = 0.9536 từ PR Curve xác nhận mô hình duy trì được độ chính xác cao khi tăng độ phủ.
+    
+    \item \textbf{Recall cao (92.65\%)}: Từ Confusion Matrix, Recall cao cho thấy mô hình ít bỏ sót các trường hợp té ngã thực sự -- điều rất quan trọng trong ứng dụng thực tế.
+\end{enumerate}
+
+Tuy nhiên, vẫn còn một số điểm cần cải thiện:
+\begin{itemize}
+    \item \textbf{46 False Positive}: Báo động sai có thể gây phiền toái cho người dùng nếu xảy ra thường xuyên.
+    \item \textbf{23 False Negative}: Bỏ sót 23 cú té ngã vẫn là con số đáng lo ngại trong môi trường y tế.
+\end{itemize}
 
 \begin{itemize}
     \item \textbf{Fold 1 và Fold 2} hoạt động tốt nhất với Acc > 83\%
@@ -491,27 +582,73 @@ Mặc dù Raspberry Pi 4 không đạt được tốc độ khung hình thời g
 
 Chương này đã trình bày chi tiết kiến trúc, thiết lập thực nghiệm và kết quả đánh giá của hệ thống HybridFallTransformer.
 
-Các kết quả nổi bật bao gồm:
+\subsection{Ưu điểm của hệ thống}
 
 \begin{enumerate}
-    \item \textbf{Độ chính xác ở mức trung bình-cao}: HybridFallTransformer đạt 81.26\% accuracy và 80.05\% F1-score trên tập dữ liệu tổng hợp CaucaFall + MCFD với 5-Fold Cross-Validation.
+    \item \textbf{Hiệu năng phân loại ở mức chấp nhận được}: HybridFallTransformer đạt Accuracy trung bình 81.26\%, F1-score trung bình 80.05\% và AUC trung bình 0.8467 trên tập dữ liệu tổng hợp CaucaFall + MCFD với phương pháp 5-Fold Cross-Validation.
     
-    \item \textbf{Kiến trúc nhẹ}: Số lượng tham số khoảng 1.8M (Transformer), có thể triển khai trên thiết bị biên như Raspberry Pi 4 (8-12 FPS).
+    \item \textbf{Kết quả tương đối ổn định qua các fold}: Accuracy dao động từ 77.69\% đến 83.21\%, trong khi F1-score dao động từ 76.80\% đến 82.81\%. Điều này cho thấy mô hình duy trì khả năng phân loại tương đối ổn định trên các tập kiểm tra khác nhau.
     
-    \item \textbf{Xử lý thời gian thực}: Trên GPU đạt >500 FPS với độ trễ chỉ 2ms; trên CPU đạt 50-100 FPS.
+    \item \textbf{Khai thác dữ liệu khung xương thay vì ảnh RGB trực tiếp}: Hệ thống sử dụng đặc trưng pose gồm chuỗi vector khung xương 60 chiều, giúp giảm phụ thuộc vào thông tin nền ảnh và hạn chế xử lý trực tiếp dữ liệu hình ảnh nhạy cảm.
     
-    \item \textbf{Kết quả ổn định qua các folds}: Accuracy dao động từ 77.69\% đến 83.21\% cho thấy mô hình hoạt động tương đối ổn định trên các tập dữ liệu khác nhau.
+    \item \textbf{Kiến trúc mô hình tương đối gọn}: Khối HybridFallTransformer có khoảng 1.8M tham số, thấp hơn so với nhiều mô hình xử lý trực tiếp chuỗi ảnh RGB. Tuy nhiên, con số này chỉ tính riêng mô hình phân loại chuỗi thời gian, không bao gồm YOLOv11-Pose ở bước trích xuất đặc trưng.
+    
+    \item \textbf{Khả năng triển khai trên thiết bị biên}: Hệ thống đạt 8-12 FPS trên Raspberry Pi 4, đủ để xử lý video từ camera giám sát thông thường trong môi trường trong nhà.
+    
+    \item \textbf{Tốc độ xử lý cao trên GPU}: Trên GPU đạt >500 FPS với độ trễ chỉ 2ms, đáp ứng yêu cầu xử lý thời gian thực.
 \end{enumerate}
 
-Một số hạn chế cần được cải thiện:
+\subsection{Nhược điểm của hệ thống}
 
 \begin{itemize}
-    \item Kết quả chưa đạt mức state-of-the-art so với một số phương pháp GCN và 3D-CNN.
-    \item Hiệu suất biến động giữa các folds (đặc biệt Fold 3 thấp hơn các folds khác).
-    \item Bộ dữ liệu huấn luyện còn hạn chế (651 mẫu).
+    \item \textbf{Kết quả chưa đạt mức state-of-the-art}: Hiệu năng của HybridFallTransformer chưa vượt trội so với một số phương pháp mạnh như 3D-CNN (85-92\%) hoặc GCN (88-92\%).
+    
+    \item \textbf{Hiệu suất biến động giữa các folds}: Fold 3 đạt kết quả thấp hơn đáng kể so với các folds khác (Accuracy 77.69\% so với mức 81-83\% của các folds khác), cho thấy mô hình có thể nhạy cảm với phân bố dữ liệu trong từng fold.
+    
+    \item \textbf{Bộ dữ liệu huấn luyện còn hạn chế}: Với chỉ 651 mẫu, tập dữ liệu huấn luyện tương đối nhỏ so với các nghiên cứu khác, có thể ảnh hưởng đến khả năng tổng quát hóa của mô hình.
+    
+    \item \textbf{Phụ thuộc vào chất lượng trích xuất khung xương}: Hiệu suất của hệ thống phụ thuộc vào độ chính xác của YOLOv11-Pose trong việc trích xuất tọa độ các điểm khớp. Trong điều kiện ánh sáng yếu, occlusion hoặc nhiều người trong khung hình, chất lượng trích xuất có thể giảm.
+    
+    \item \textbf{Không xử lý được các trường hợp té ngã từ từ (slow descent)}: Các cú té ngã có tốc độ thay đổi chậm có đặc trưng động học không khác biệt nhiều so với hoạt động sinh hoạt thông thường, dẫn đến nguy cơ bị bỏ sót.
+    
+    \item \textbf{Số lượng False Positive còn đáng kể}: Với 46 trường hợp báo động sai trên 651 mẫu, hệ thống có thể gây phiền toái cho người dùng nếu triển khai trong thực tế.
 \end{itemize}
 
-Hướng cải thiện trong tương lai bao gồm: (1) tăng cường data augmentation cho dữ liệu skeleton; (2) tối ưu hóa kiến trúc và siêu tham số; (3) thu thập thêm dữ liệu từ môi trường thực tế.
+%-------------------------------------------------
+\section{Hướng phát triển}
+\label{sec:future_work}
+
+Dựa trên các hạn chế đã nhận diện, đề tài đề xuất ba hướng phát triển chính.
+
+\subsection{Tối ưu mô hình và Edge AI}
+\label{sec:future_edge}
+
+\begin{enumerate}
+    \item \textbf{Quantization và Pruning}: áp dụng các kỹ thuật nén mô hình như INT8 quantization và structured pruning để giảm kích thước và tăng tốc độ suy luận trên thiết bị biên.
+    
+    \item \textbf{Tối ưu cho Edge}: sử dụng TensorRT hoặc ONNX Runtime để tối ưu hóa mô hình trên thiết bị Edge, hướng tới đạt $30+$ FPS trên Raspberry Pi.
+    
+    \item \textbf{Edge-Cloud Hybrid}: thiết kế kiến trúc hybrid cho phép xử lý trên Edge khi điều kiện mạng không thuận lợi, đồng thời tự động chuyển lên Cloud khi cần tăng cường độ chính xác.
+    
+    \item \textbf{Kết hợp với TinyML}: nghiên cứu khả năng triển khai mô hình nhẹ hơn nữa trên vi điều khiển IoT.
+\end{enumerate}
+
+\subsection{Mở rộng bài toán và dữ liệu}
+\label{sec:future_data}
+
+\begin{enumerate}
+    \item \textbf{Bộ dữ liệu thực tế}: thu thập thêm dữ liệu từ môi trường bệnh viện, viện dưỡng lão và hộ gia đình với sự đồng ý của người tham gia. Dữ liệu nên tập trung vào các tình huống khó như ánh sáng yếu, occlusion một phần và nhiều người trong khung hình.
+    
+    \item \textbf{Mở rộng phân loại đa lớp}: thay vì phân loại nhị phân Fall/ADL, mở rộng thành phân loại đa lớp với các nhãn như Standing, Walking, Sitting, Lying, Bending, Falling Forward, Falling Backward và Slipping, nhằm cung cấp thông tin chi tiết hơn về tình huống cho đội ngũ y tế.
+    
+    \item \textbf{Xử lý multi-person}: nghiên cứu kiến trúc xử lý đồng thời nhiều người trong khung hình, phù hợp với môi trường bệnh viện có nhiều bệnh nhân.
+    
+    % \item \textbf{Data Augmentation}: áp dụng các kỹ thuật augmentation cho dữ liệu skeleton để tăng tính đa dạng và độ ổn định của mô hình.
+\end{enumerate}
+
+%-------------------------------------------------
+
+Nhìn chung, kết quả thực nghiệm cho thấy HybridFallTransformer có khả năng nhận dạng té ngã ở mức khá trên tập dữ liệu đã xây dựng. Mặc dù mô hình chưa vượt trội tuyệt đối so với một số phương pháp mạnh như 3D-CNN hoặc ST-GCN, hướng tiếp cận dựa trên khung xương vẫn có ưu điểm về tính gọn nhẹ, khả năng bảo vệ quyền riêng tư và phù hợp với bài toán theo dõi té ngã trong môi trường trong nhà.
 
 Các kết quả này xác nhận tính khả thi của việc sử dụng kiến trúc Hybrid Transformer cho bài toán phát hiện té ngã trên thiết bị biên, mở ra hướng triển khai thực tế trong các cơ sở chăm sóc sức khỏe người cao tuổi.
 

@@ -146,21 +146,6 @@ Module PIFR (\textit{Pose-based Interesting Feature Representation}) \cite{kong2
 
 Sau khi trích xuất đặc trưng khung xương từ YOLOv11n-Pose và biến đổi bằng module PIFR, hệ thống cần mô hình hóa sự thay đổi của các đặc trưng này theo thời gian để nhận diện khoảnh khắc té ngã. Phần này trình bày cơ sở lý thuyết của Transformer trong mô hình hóa chuỗi thời gian.
 
-\subsection{Hạn chế của mạng hồi quy (RNN/LSTM)}
-\label{sec:lstm_limitations}
-
-Mạng LSTM (\textit{Long Short-Term Memory}) được thiết kế để khắc phục hạn chế của RNN cơ bản trong việc nắm bắt phụ thuộc dài hạn thông qua cơ chế cổng (\textit{gate mechanism}) gồm forget gate, input gate và output gate. Mỗi cell duy trì một cell state $C_t$ được cập nhật có chọn lọc qua các time step:
-
-\begin{equation}
-C_t = f_t \odot C_{t-1} + i_t \odot \tilde{C}_t
-\end{equation}
-
-trong đó $f_t$ và $i_t$ lần lượt là forget gate và input gate, $\tilde{C}_t$ là candidate cell state mới.
-
-Tuy nhiên, LSTM vẫn gặp phải vấn đề \textbf{triệt tiêu đạo hàm} (\textit{vanishing gradient}) khi chuỗi thời gian quá dài. Đạo hàm của loss theo hidden state ở time step đầu tiên bị nhân liên tục bởi các ma trận trọng số qua nhiều bước thời gian, dẫn đến giá trị cực nhỏ và mạng không thể học được các phụ thuộc dài hạn hiệu quả. Điều này đặc biệt bất lợi cho bài toán phát hiện té ngã vì một cú ngã thường trải qua nhiều giai đoạn: mất thăng bằng → rơi tự do → va chạm → nằm bất động, kéo dài hàng chục khung hình.
-
-Ngoài ra, LSTM xử lý chuỗi tuần tự theo cơ chế recurrence, không thể song song hóa (\textit{parallelization}) hiệu quả trên GPU hiện đại. Điều này làm tăng độ trễ xử lý và không phù hợp cho ứng dụng thời gian thực.
-
 \subsection{Cơ chế Tự chú ý theo thời gian (Temporal Self-Attention)}
 \label{sec:temporal_self_attention}
 
@@ -209,6 +194,11 @@ PE_{(pos, 2i+1)} = \cos\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)
 trong đó $h_t^{(L)}$ là hidden state của khung hình $t$ ở layer cuối cùng $L$. Mean Pooling cho phép mô hình tận dụng thông tin từ toàn bộ chuỗi thay vì chỉ một token đại diện duy nhất, đồng thời giảm số lượng tham số cần học so với cách tiếp cận dùng [CLS] token.
 
 Vector $\mathbf{z}$ sau Mean Pooling có chiều bằng $d_{\text{model}}$ (kích thước hidden layer) và được đưa qua một lớp phân loại tuyến tính để dự đoán nhãn lớp.
+
+\subsection{Liên hệ với bài toán phát hiện té ngã}
+\label{sec:transformer_fall_detection_connection}
+
+Kiến trúc Hybrid Transformer được đề xuất trong luận văn này tận dụng ưu điểm vốn có của mạng Transformer để giải quyết các thách thức đặc thù trong bài toán phát hiện té ngã. Đầu tiên, do sự kiện té ngã thường diễn ra trong khoảng thời gian ngắn (1--3 giây) nhưng có tính đột phá cao, cơ chế tự chú ý đa đầu cho phép mô hình nắm bắt đồng thời mối quan hệ nhân quả giữa các giai đoạn chuyển động bất thường và các hoạt động sinh hoạt thường ngày xảy ra trước đó. Điều này đặc biệt quan trọng khi phân biệt té ngã thật sự với các hành vi giả dương (\textit{false positive}) như ngồi xuống nhanh, cúi người hoặc với tay xuống đất để nhặt vật. Thứ hai, với yêu cầu thời gian suy luận dưới 200 ms trên thiết bị Edge AI, việc sử dụng cấu trúc Encoder nhẹ với số lớp và số đầu chú ý được giới hạn cân bằng hiệu quả giữa độ chính xác phân loại và chi phí tính toán. Thứ ba, toán tử trung bình gộp thay vì token \verb|[CLS]| giúp biểu diễn cuối cùng $\mathbf{z}$ mang tính đại diện cao hơn cho toàn bộ chuỗi chuyển động, tránh việc phụ thuộc quá mức vào thông tin của một vị trí cố định trong chuỗi. Kết quả thực nghiệm trong Chương~\ref{chapter:experiment} sẽ chứng minh rằng cách tiếp cận này đạt được hiệu suất cân bằng tốt giữa độ chính xác (Accuracy) và khả năng phản ứng nhanh (latency), đáp ứng yêu cầu của hệ thống cảnh báo té ngã thời gian thực trong môi trường gia đình.
 
 %-------------------------------------------------
 

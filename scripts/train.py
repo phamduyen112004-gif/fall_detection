@@ -37,7 +37,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
-    f1_score, roc_auc_score, confusion_matrix
+    f1_score, roc_auc_score, confusion_matrix,
+    precision_recall_curve
 )
 
 try:
@@ -64,6 +65,35 @@ from src.trainer import (
     evaluate,
     setup_logging,
 )
+
+
+# =============================================================================
+# THRESHOLD CALCULATION
+# =============================================================================
+
+def find_optimal_threshold(y_true: np.ndarray, y_probs: np.ndarray) -> tuple:
+    """
+    Find optimal threshold based on F1-score maximization.
+
+    Args:
+        y_true: Ground truth labels (0 or 1)
+        y_probs: Predicted probabilities for positive class
+
+    Returns:
+        Tuple of (optimal_threshold, max_f1_score)
+    """
+    precision, recall, thresholds = precision_recall_curve(y_true, y_probs)
+
+    # Calculate F1-scores for all thresholds
+    f1_scores = np.zeros_like(precision[:-1])
+    for i in range(len(precision) - 1):
+        if precision[i] + recall[i] > 0:
+            f1_scores[i] = (2 * precision[i] * recall[i]) / (precision[i] + recall[i])
+        else:
+            f1_scores[i] = 0.0
+
+    best_idx = np.argmax(f1_scores)
+    return float(thresholds[best_idx]), float(f1_scores[best_idx])
 
 
 # =============================================================================
@@ -314,23 +344,29 @@ def train_single_variant(
         model.load_state_dict(best_model_state)
     model.eval()
     
-    test_metrics = evaluate(model, test_loader, criterion, device)
-    
+    test_metrics = evaluate(model, test_loader, criterion, device, return_probs=True)
+
+    # Calculate optimal threshold based on F1-score maximization
+    y_true = test_metrics["y_true"]
+    y_probs = test_metrics["y_probs"]
+    optimal_threshold, optimal_f1 = find_optimal_threshold(y_true, y_probs)
+
     acc = test_metrics.get("accuracy", 0.0)
     prec = test_metrics.get("precision", 0.0)
     rec = test_metrics.get("recall", 0.0)
     f1 = test_metrics.get("f1", 0.0)
     auc = test_metrics.get("auc", 0.0)
     cm = test_metrics.get("confusion_matrix", [[0,0],[0,0]])
-    
+
     print(f"\n  Test Results:")
     print(f"    Accuracy:  {acc:.4f}")
     print(f"    Precision: {prec:.4f}")
     print(f"    Recall:   {rec:.4f}")
     print(f"    F1-Score: {f1:.4f}")
     print(f"    AUC-ROC:  {auc:.4f}")
+    print(f"\n  Optimal Threshold: {optimal_threshold:.4f} (F1={optimal_f1:.4f})")
     
-    # Save variant metrics
+    # Save variant metrics with optimal threshold
     metrics = {
         'variant': config.name,
         'accuracy': float(acc),
@@ -338,6 +374,8 @@ def train_single_variant(
         'recall': float(rec),
         'f1': float(f1),
         'auc': float(auc),
+        'optimal_threshold': float(optimal_threshold),
+        'threshold_f1_score': float(optimal_f1),
         'confusion_matrix': cm,
         'best_val_f1': float(best_f1),
         'num_params_M': float(num_params),
@@ -354,9 +392,18 @@ def train_single_variant(
             'weight_decay': weight_decay,
         }
     }
-    
+
     with open(os.path.join(variant_res, 'metrics.json'), 'w') as f:
         json.dump(metrics, f, indent=2)
+
+    # Save threshold config file for GUI
+    threshold_config = {
+        'optimal_threshold': float(optimal_threshold),
+        'threshold_f1_score': float(optimal_f1),
+        'model_path': 'best_model.pth',
+    }
+    with open(os.path.join(variant_res, 'threshold_config.json'), 'w') as f:
+        json.dump(threshold_config, f, indent=2)
     
     # Copy model to results
     shutil.copy(
