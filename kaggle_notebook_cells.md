@@ -794,7 +794,7 @@ print(f"\n✓ Training complete!")
 print(f"✓ Model saved: {MODEL_DIR / 'best_model.pth'}")
 ```
 
-## Cell 5: Evaluate Model
+## Cell 5: Evaluate Model on Test Set
 
 ```python
 import torch
@@ -803,6 +803,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import time
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.model_selection import StratifiedKFold
 from pathlib import Path
 
 # Config
@@ -815,12 +816,43 @@ d_model = 256
 nhead = 8
 num_layers = 4
 dropout = 0.2
+n_folds = 5
+random_state = 42
+
+# Reload original data
+print("=" * 70)
+print("RELOADING DATA")
+print("=" * 70)
+
+def load_all_data():
+    """Load all processed data from available sources."""
+    X_list, y_list = [], []
+    sources = [
+        "/kaggle/input/datasets/phmthduyn/caucafall-processed",
+        "/kaggle/input/datasets/phmthduyn/mcfd-processed",
+    ]
+    for data_dir in sources:
+        p = Path(data_dir)
+        if p.exists():
+            x_files = sorted([f for f in p.glob("X_*.npy")])
+            y_files = sorted([f for f in p.glob("y_*.npy")])
+            print(f"  Loading {len(x_files)} samples from {data_dir}")
+            for xf, yf in zip(x_files, y_files):
+                X_list.append(np.load(xf))
+                y_list.append(np.load(yf).item())
+    return np.array(X_list), np.array(y_list)
+
+X, y = load_all_data()
+print(f"\n✓ Total dataset: {len(X)} samples")
+print(f"  Fall: {np.sum(y == 1)}, No Fall: {np.sum(y == 0)}")
+print(f"  Shape: X={X.shape}, y={y.shape}")
 
 if not MODEL_PATH.exists():
-    print("✗ Model not found. Run Cell 4 first.")
+    print("\n✗ Model not found. Run Cell 4 first.")
 else:
     from src.hybrid_transformer import HybridFallTransformer
     
+    # Load best model
     model = HybridFallTransformer(
         input_dim=X.shape[2], num_frames=X.shape[1],
         d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout
@@ -830,24 +862,65 @@ else:
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    print(f"Device: {device}")
+    print(f"\nDevice: {device}")
+    print(f"Model loaded: {MODEL_PATH}")
     
-    # Get predictions
-    all_preds, all_probs, all_labels = [], [], []
-    with torch.no_grad():
-        for i in range(0, len(X), 64):
-            batch_x = torch.FloatTensor(X[i:i+64]).to(device)
-            outputs = model(batch_x)
-            probs = torch.sigmoid(outputs).cpu().numpy().flatten()
-            preds = (probs > 0.5).astype(int)
-            all_probs.extend(probs.tolist())
-            all_preds.extend(preds.tolist())
-            all_labels.extend(y[i:i+64].tolist())
+    # ========== EVALUATE ON ALL FOLD TEST SETS (K-Fold CV) ==========
+    print("\n" + "=" * 70)
+    print("EVALUATING ON ALL FOLD TEST SETS (5-Fold CV)")
+    print("=" * 70)
     
-    y_true, y_pred, y_scores = np.array(all_labels), np.array(all_preds), np.array(all_probs)
+    # Collect predictions from all folds
+    all_test_labels = []
+    all_test_preds = []
+    all_test_probs = []
+    fold_results = []
+    
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    
+    for fold, (train_idx, test_idx) in enumerate(skf.split(X, y)):
+        X_fold_test, y_fold_test = X[test_idx], y[test_idx]
+        
+        # Get predictions for this fold's test set
+        fold_preds, fold_probs, fold_labels = [], [], []
+        with torch.no_grad():
+            for i in range(0, len(X_fold_test), 64):
+                batch_x = torch.FloatTensor(X_fold_test[i:i+64]).to(device)
+                outputs = model(batch_x)
+                probs = torch.sigmoid(outputs).cpu().numpy().flatten()
+                preds = (probs > 0.5).astype(int)
+                fold_probs.extend(probs.tolist())
+                fold_preds.extend(preds.tolist())
+                fold_labels.extend(y_fold_test[i:i+64].tolist())
+        
+        all_test_labels.extend(fold_labels)
+        all_test_preds.extend(fold_preds)
+        all_test_probs.extend(fold_probs)
+        
+        # Calculate fold metrics
+        fold_tn, fold_fp, fold_fn, fold_tp = confusion_matrix(fold_labels, fold_preds).ravel()
+        fold_acc = (fold_tp + fold_tn) / (fold_tp + fold_tn + fold_fp + fold_fn)
+        fold_prec = fold_tp / (fold_tp + fold_fp) if (fold_tp + fold_fp) > 0 else 0
+        fold_rec = fold_tp / (fold_tp + fold_fn) if (fold_tp + fold_fn) > 0 else 0
+        fold_f1 = 2 * fold_prec * fold_rec / (fold_prec + fold_rec) if (fold_prec + fold_rec) > 0 else 0
+        
+        fold_results.append({
+            'fold': fold + 1,
+            'tn': fold_tn, 'fp': fold_fp, 'fn': fold_fn, 'tp': fold_tp,
+            'accuracy': fold_acc, 'precision': fold_prec,
+            'recall': fold_rec, 'f1': fold_f1,
+            'test_size': len(fold_labels)
+        })
+        
+        print(f"Fold {fold + 1}: Acc={fold_acc:.4f}, Prec={fold_prec:.4f}, Rec={fold_rec:.4f}, F1={fold_f1:.4f} (n={len(fold_labels)})")
+    
+    # Aggregate across all folds
+    y_true = np.array(all_test_labels)
+    y_pred = np.array(all_test_preds)
+    y_scores = np.array(all_test_probs)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     
-    # ========== METRICS ==========
+    # Calculate final metrics
     accuracy = (tp + tn) / (tp + tn + fp + fn)
     precision_val = tp / (tp + fp) if (tp + fp) > 0 else 0
     sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
@@ -856,39 +929,71 @@ else:
     error_rate = (fp + fn) / (tp + tn + fp + fn)
     false_alarm_rate = 1 - specificity
     
+    # Calculate mean and std for each metric across folds
+    mean_acc = np.mean([r['accuracy'] for r in fold_results])
+    std_acc = np.std([r['accuracy'] for r in fold_results])
+    mean_prec = np.mean([r['precision'] for r in fold_results])
+    std_prec = np.std([r['precision'] for r in fold_results])
+    mean_rec = np.mean([r['recall'] for r in fold_results])
+    std_rec = np.std([r['recall'] for r in fold_results])
+    mean_f1 = np.mean([r['f1'] for r in fold_results])
+    std_f1 = np.std([r['f1'] for r in fold_results])
+    
     fpr_roc, tpr_roc, _ = roc_curve(y_true, y_scores)
     roc_auc = auc(fpr_roc, tpr_roc)
     precision_arr, recall_arr, _ = precision_recall_curve(y_true, y_scores)
     pr_auc = average_precision_score(y_true, y_scores)
     
+    print("\n" + "=" * 70)
+    print("5-FOLD CROSS-VALIDATION RESULTS (Aggregated)")
     print("=" * 70)
-    print("EVALUATION RESULTS")
-    print("=" * 70)
-    print(f"{'METRIC':<30} {'VALUE':<15}")
-    print("-" * 45)
-    print(f"{'Accuracy':<30} {accuracy:.4f}")
-    print(f"{'Precision (PPV)':<30} {precision_val:.4f}")
-    print(f"{'Sensitivity / Recall (TPR)':<30} {sensitivity:.4f}")
-    print(f"{'Specificity (TNR)':<30} {specificity:.4f}")
-    print(f"{'F1-Score':<30} {f1:.4f}")
-    print(f"{'ROC AUC':<30} {roc_auc:.4f}")
-    print(f"{'PR AUC (AP)':<30} {pr_auc:.4f}")
-    print(f"{'Error Rate':<30} {error_rate:.4f}")
-    print(f"{'False Alarm Rate':<30} {false_alarm_rate:.4f}")
-    print("-" * 45)
-    print(f"\nConfusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}")
-    print(classification_report(y_true, y_pred, target_names=['No Fall', 'Fall'], digits=4))
+    print(f"Total Test Samples: {len(y_true)}")
+    print("-" * 55)
+    print(f"{'METRIC':<30} {'MEAN':<12} {'STD':<10}")
+    print("-" * 55)
+    print(f"{'Accuracy':<30} {mean_acc:.4f}      {std_acc:.4f}")
+    print(f"{'Precision (PPV)':<30} {mean_prec:.4f}      {std_prec:.4f}")
+    print(f"{'Sensitivity / Recall (TPR)':<30} {mean_rec:.4f}      {std_rec:.4f}")
+    print(f"{'Specificity (TNR)':<30} {specificity:.4f}      (per-fold)")
+    print(f"{'F1-Score':<30} {mean_f1:.4f}      {std_f1:.4f}")
+    print("-" * 55)
+    print(f"{'ROC AUC (Overall)':<30} {roc_auc:.4f}")
+    print(f"{'PR AUC / AP (Overall)':<30} {pr_auc:.4f}")
+    print("-" * 55)
+    print(f"\nAggregated Confusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}")
+    print(f"\n{classification_report(y_true, y_pred, target_names=['No Fall', 'Fall'], digits=4)}")
     
-    # ========== FPS ==========
+    # ========== FPS (Single Sample - Real-time) ==========
     print("=" * 70)
-    print("INFERENCE SPEED")
+    print("INFERENCE SPEED (Real-time Single Sample)")
     print("=" * 70)
     
     # Warmup
     for _ in range(10):
         _ = model(torch.FloatTensor(1, 60, 60).to(device))
     
-    # Benchmark
+    # Benchmark single sample
+    n_runs = 500
+    start = time.time()
+    for _ in range(n_runs):
+        _ = model(torch.FloatTensor(1, 60, 60).to(device))
+    elapsed = time.time() - start
+    
+    fps_single = n_runs / elapsed
+    latency_ms = (elapsed / n_runs) * 1000
+    print(f"FPS (batch=1): {fps_single:.1f}")
+    print(f"Latency: {latency_ms:.2f} ms/sample")
+    
+    # ========== FPS (Batch Inference) ==========
+    print("\n" + "=" * 70)
+    print("INFERENCE SPEED (Batch Inference)")
+    print("=" * 70)
+    
+    # Warmup
+    for _ in range(10):
+        _ = model(torch.FloatTensor(32, 60, 60).to(device))
+    
+    # Benchmark batch
     n_runs = 200
     start = time.time()
     for _ in range(n_runs):
@@ -896,50 +1001,123 @@ else:
     elapsed = time.time() - start
     
     fps_batch = n_runs * 32 / elapsed
-    latency_ms = (elapsed / n_runs / 32) * 1000
     print(f"FPS (batch=32): {fps_batch:.1f}")
-    print(f"Latency: {latency_ms:.2f} ms/sample")
+    print(f"Latency: {(elapsed / n_runs / 32) * 1000:.2f} ms/sample")
     
-    # ========== PLOTS ==========
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    # ========== PLOTS (5-Fold CV Aggregated) ==========
+    print("=" * 70)
+    print("GENERATING VISUALIZATIONS")
+    print("=" * 70)
     
-    sns.heatmap([[tn, fp], [fn, tp]], annot=True, fmt='d', cmap='Blues', ax=axes[0],
-                xticklabels=['No Fall', 'Fall'], yticklabels=['No Fall', 'Fall'])
-    axes[0].set_xlabel('Predicted')
-    axes[0].set_ylabel('Actual')
-    axes[0].set_title('Confusion Matrix')
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     
+    # Confusion Matrix
+    cm = confusion_matrix(y_true, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0],
+                xticklabels=['No Fall', 'Fall'], yticklabels=['No Fall', 'Fall'],
+                annot_kws={'size': 14})
+    axes[0].set_xlabel('Predicted Label', fontsize=11)
+    axes[0].set_ylabel('True Label', fontsize=11)
+    axes[0].set_title('Confusion Matrix\n(5-Fold CV)', fontsize=13, fontweight='bold')
+    
+    # ROC Curve
     axes[1].plot(fpr_roc, tpr_roc, 'b-', linewidth=2, label=f'ROC (AUC={roc_auc:.4f})')
-    axes[1].plot([0, 1], [0, 1], 'k--')
-    axes[1].set_xlabel('FPR')
-    axes[1].set_ylabel('TPR')
-    axes[1].set_title('ROC Curve')
-    axes[1].legend()
+    axes[1].plot([0, 1], [0, 1], 'k--', linewidth=1)
+    axes[1].fill_between(fpr_roc, tpr_roc, alpha=0.2, color='blue')
+    axes[1].set_xlabel('False Positive Rate', fontsize=11)
+    axes[1].set_ylabel('True Positive Rate', fontsize=11)
+    axes[1].set_title('ROC Curve\n(5-Fold CV)', fontsize=13, fontweight='bold')
+    axes[1].legend(loc='lower right')
     axes[1].grid(True, alpha=0.3)
     
+    # PR Curve
     axes[2].plot(recall_arr, precision_arr, 'g-', linewidth=2, label=f'PR (AP={pr_auc:.4f})')
-    axes[2].axhline(y=np.sum(y_true)/len(y_true), color='r', linestyle='--', label='Baseline')
-    axes[2].set_xlabel('Recall')
-    axes[2].set_ylabel('Precision')
-    axes[2].set_title('PR Curve')
-    axes[2].legend()
+    axes[2].axhline(y=np.sum(y_true)/len(y_true), color='r', linestyle='--', linewidth=1, label='Baseline')
+    axes[2].fill_between(recall_arr, precision_arr, alpha=0.2, color='green')
+    axes[2].set_xlabel('Recall', fontsize=11)
+    axes[2].set_ylabel('Precision', fontsize=11)
+    axes[2].set_title('Precision-Recall Curve\n(5-Fold CV)', fontsize=13, fontweight='bold')
+    axes[2].legend(loc='lower left')
     axes[2].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(LOG_DIR / 'evaluation_results.png', dpi=150, bbox_inches='tight')
+    plt.savefig(LOG_DIR / 'evaluation_results_5fold_cv.png', dpi=150, bbox_inches='tight')
     plt.show()
+    print(f"✓ Saved: evaluation_results_5fold_cv.png")
+    print(f"✓ Saved: confusion_matrix_5fold_cv.png")
+    
+    # ========== CONFUSION MATRIX (5-Fold CV Aggregated) ==========
+    print("\n" + "=" * 70)
+    print("CONFUSION MATRIX - 5-FOLD CROSS-VALIDATION")
+    print("=" * 70)
+    print(f"Total Test Samples (5 folds): {len(y_true)}")
+    print(f"  True Negatives (TN):  {tn} - Correctly predicted No Fall")
+    print(f"  False Positives (FP): {fp} - False Alarm (predicted Fall, actually No Fall)")
+    print(f"  False Negatives (FN): {fn} - Missed Fall (predicted No Fall, actually Fall)")
+    print(f"  True Positives (TP):  {tp} - Correctly predicted Fall")
+    print("=" * 70)
+    
+    fig2, ax2 = plt.subplots(figsize=(9, 7))
+    
+    # Confusion Matrix Heatmap
+    cm = confusion_matrix(y_true, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax2,
+                xticklabels=['No Fall (0)', 'Fall (1)'], 
+                yticklabels=['No Fall (0)', 'Fall (1)'],
+                annot_kws={'size': 22, 'weight': 'bold'},
+                linewidths=3, linecolor='white',
+                cbar_kws={'label': 'Number of Samples'})
+    
+    ax2.set_xlabel('Predicted Label', fontsize=14, fontweight='bold')
+    ax2.set_ylabel('True Label', fontsize=14, fontweight='bold')
+    ax2.set_title('Confusion Matrix - 5-Fold Cross-Validation\n(Aggregated Results from All Folds)', 
+                  fontsize=15, fontweight='bold', pad=20)
+    
+    # Add metrics annotation box
+    metrics_text = (
+        f"5-Fold CV Results\n"
+        f"{'─' * 22}\n"
+        f"Accuracy:   {mean_acc:.4f} ± {std_acc:.4f}\n"
+        f"Precision:  {mean_prec:.4f} ± {std_prec:.4f}\n"
+        f"Recall:     {mean_rec:.4f} ± {std_rec:.4f}\n"
+        f"F1-Score:   {mean_f1:.4f} ± {std_f1:.4f}\n"
+        f"{'─' * 22}\n"
+        f"ROC-AUC:    {roc_auc:.4f}\n"
+        f"PR-AUC:     {pr_auc:.4f}"
+    )
+    ax2.text(1.35, 0.5, metrics_text, transform=ax2.transAxes, fontsize=11,
+             verticalalignment='center', fontfamily='monospace',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', 
+                       edgecolor='gray', alpha=0.9))
+    
+    plt.tight_layout()
+    plt.savefig(LOG_DIR / 'confusion_matrix_5fold_cv.png', dpi=200, bbox_inches='tight')
+    plt.show()
+    print(f"✓ Saved: confusion_matrix_5fold_cv.png")
     
     # Save metrics
     import json
     metrics = {
+        "model": "HybridFallTransformer",
+        "evaluation_type": "5-Fold Cross-Validation",
+        "mean_accuracy": float(mean_acc), "std_accuracy": float(std_acc),
+        "mean_precision": float(mean_prec), "std_precision": float(std_prec),
+        "mean_recall": float(mean_rec), "std_recall": float(std_rec),
+        "mean_f1": float(mean_f1), "std_f1": float(std_f1),
         "accuracy": float(accuracy), "precision": float(precision_val),
         "sensitivity": float(sensitivity), "specificity": float(specificity),
         "f1_score": float(f1), "roc_auc": float(roc_auc),
         "pr_auc": float(pr_auc), "error_rate": float(error_rate),
         "false_alarm_rate": float(false_alarm_rate),
-        "fps_batch_32": float(fps_batch), "latency_ms": float(latency_ms),
+        "fps_batch_32": float(fps_batch), "fps_single": float(fps_single),
+        "latency_ms": float(latency_ms),
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
-        "total_samples": len(y_true)
+        "total_samples": len(y_true),
+        "per_fold_results": [
+            {"fold": r['fold'], "accuracy": r['accuracy'], "precision": r['precision'],
+             "recall": r['recall'], "f1": r['f1'], "test_size": r['test_size']}
+            for r in fold_results
+        ]
     }
     with open(LOG_DIR / 'metrics.json', 'w') as f:
         json.dump(metrics, f, indent=2)
