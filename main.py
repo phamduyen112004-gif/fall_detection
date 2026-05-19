@@ -86,6 +86,11 @@ _MODES: Dict[str, _ModeEntry] = {
         "src.gui_app",
         "run_app",
     ),
+    "simple": (
+        "Launch the simple GUI with webcam and video upload.",
+        "app_simple_gui",
+        "main",
+    ),
 }
 
 
@@ -153,9 +158,12 @@ def main() -> int:
     _logger.info("  %s", description)
 
     try:
-        # GUI mode: run directly without subprocess (avoids PyQt5 fork issues)
-        if mode_key == "app":
-            from src.gui_app import run_app
+        # GUI modes: run directly without subprocess (avoids PyQt5 fork issues)
+        if mode_key in ("app", "simple"):
+            if mode_key == "app":
+                from src.gui_app import run_app
+            else:
+                from app_simple_gui import main as run_app
             exit_code: int = run_app()
             return exit_code
 

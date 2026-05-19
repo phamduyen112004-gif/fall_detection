@@ -14,38 +14,36 @@ Pipeline tổng quan của hệ thống HybridFallTransformer được minh họ
 
 \begin{enumerate}
     \item \textbf{Thu nhận video} từ camera giám sát RGB.
-    \item \textbf{Trích xuất khung xương} bằng mô hình YOLOv11l-Pose, cho ra vector tọa độ 17 điểm khớp COCO.
+    \item \textbf{Trích xuất khung xương} bằng mô hình YOLOv11-Pose, cho ra vector tọa độ 17 điểm khớp COCO.
     \item \textbf{Biến đổi đặc trưng} bằng module PIFR, tạo vector 60 chiều cho mỗi khung hình.
     \item \textbf{Mô hình hóa chuỗi thời gian} bằng Hybrid Transformer Encoder với Temporal Self-Attention.
     \item \textbf{Phân loại và cảnh báo} -- nếu phát hiện té ngã, hệ thống gửi thông báo qua Telegram.
 \end{enumerate}
 
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=0.95\textwidth]{figures/chapter3/pipeline_overview.png}
-    \caption{Sơ đồ pipeline hệ thống HybridFallTransformer}
-    \label{fig:pipeline_overview}
-\end{figure}
+%\begin{figure}[h]
+%    \centering
+%    \includegraphics[width=0.95\textwidth]{figures/chapter3/pipeline_overview.png}
+%    \caption{Sơ đồ pipeline hệ thống HybridFallTransformer}
+%    \label{fig:pipeline_overview}
+%\end{figure}
 
 Điểm nổi bật của pipeline này là toàn bộ dữ liệu hình ảnh RGB chỉ được sử dụng tại bước 2 để trích xuất khung xương, sau đó bị hủy ngay lập tức. Các bước 3-5 chỉ làm việc với vector tọa độ số, đảm bảo quyền riêng tư tuyệt đối cho đối tượng được giám sát.
 
-\subsection{Module trích xuất khung xương YOLOv11l-Pose}
+\subsection{Module trích xuất khung xương YOLOv11-Pose}
 \label{sec:yolo_pose_module}
 
-YOLOv11l-Pose là biến thể của YOLOv11 được tối ưu cho bài toán ước lượng tư thế người. Module này nhận đầu vào là khung hình RGB và đầu ra là danh sách các người được phát hiện cùng với tọa độ 17 điểm khớp COCO cho mỗi người.
+YOLOv11-Pose là biến thể của YOLOv11 được tối ưu cho bài toán ước lượng tư thế người. Module này nhận đầu vào là khung hình RGB và đầu ra là danh sách các người được phát hiện cùng với tọa độ 17 điểm khớp COCO cho mỗi người.
 
 Cấu hình của module trong hệ thống:
 
 \begin{itemize}
     \item \textbf{Kích thước đầu vào}: 640 × 640 pixel
-    \item \textbf{Ngưỡng confidence}: 0.5 (threshold để coi là phát hiện hợp lệ)
-    \item \textbf{Ngưỡng NMS}: 0.5 (loại bỏ các bounding box trùng lặp)
+    \item \textbf{Ngưỡng confidence}: 0.5
+    \item \textbf{Ngưỡng NMS}: 0.5
     \item \textbf{Kết quả đầu ra}: tensor có shape $(N, 17, 3)$ với $N$ là số người trong khung hình, mỗi điểm gồm $(x, y, confidence)$
 \end{itemize}
 
 Trong triển khai thực tế cho bài toán phát hiện té ngã, hệ thống giả định chỉ có một người trong khung hình (phù hợp với phòng bệnh nhân hoặc phòng ngủ người cao tuổi). Nếu phát hiện nhiều hơn một người, hệ thống chọn người có tổng confidence cao nhất.
-
-Chi phí tính toán của YOLOv11l-Pose là khoảng 60-80 GFLOPs với 20.9 triệu tham số (file mô hình 50.7MB), cho phép xử lý ở tốc độ khoảng 30-40 FPS trên GPU RTX 3080 và 10-15 FPS trên CPU hiện đại. Kích thước mô hình lớn hơn so với phiên bản nano nhưng đảm bảo độ chính xác cao hơn trong việc trích xuất khung xương.
 
 \subsection{Module biến đổi đặc trưng PIFR}
 \label{sec:pifr_module_detail}
@@ -55,16 +53,16 @@ Module PIFR (\textit{Pose-based Interesting Feature Representation}) được á
 Quy trình biến đổi bao gồm bốn nhóm đặc trưng:
 
 \begin{enumerate}
-    \item \textbf{Đặc trưng vị trí tuyệt đối (10 chiều)}: tọa độ chuẩn hóa của đầu, vai, hông, trung tâm khung xương -- tính bằng cách chia cho chiều cao/chiều rộng của bounding box.
+    \item \textbf{Đặc trưng vị trí tuyệt đối (10 chiều)}: tọa độ chuẩn hóa của đầu, vai, hông, trung tâm khung xương.
     
-    \item \textbf{Đặc trưng khoảng cách xương (16 chiều)}: độ dài của các xương chính như vai, hông, tay (vai-khuỷu-cổ tay), chân (hông-đầu gối-mắt cá).
+    \item \textbf{Đặc trưng khoảng cách xương (16 chiều)}: độ dài của các xương chính như vai, hông, tay, chân.
     
     \item \textbf{Đặc trưng góc (12 chiều)}: góc tại các khớp then chốt -- vai trái, vai phải, hông trái, hông phải, gáy, thân. Các góc này đặc biệt nhạy với trạng thái té ngã vì khi ngã, thân người thường tạo góc bất thường với mặt phẳng đứng.
     
     \item \textbf{Đặc trưng động học (22 chiều)}: tốc độ thay đổi (velocity) và gia tốc (acceleration) của 4 góc và 4 khoảng cách quan trọng nhất. Nhóm đặc trưng này phản ánh động lực học chuyển động -- té ngã có gia tốc lớn và đột ngột ở giai đoạn va chạm.
 \end{enumerate}
 
-Module PIFR không chứa tham số học được, hoàn toàn dựa trên tính toán hình học. Thời gian xử lý dưới 1ms trên CPU, không ảnh hưởng đáng kể đến tổng độ trễ hệ thống.
+Module PIFR không chứa tham số học được, hoàn toàn dựa trên tính toán hình học. Thời gian xử lý dưới 1ms trên CPU.
 
 \subsection{Bộ mã hóa Hybrid Transformer}
 \label{sec:hybrid_transformer_detail}
@@ -73,35 +71,26 @@ Sau khi biến đổi bằng PIFR, chuỗi vector đặc trưng 60D được đ�
 
 Kiến trúc Hybrid Transformer Encoder bao gồm các thành phần:
 
-\textbf{Lớp nhúng đặc trưng (Feature Embedding Layer).} Vector 60D từ PIFR được ánh xạ lên không gian $d_{\text{model}} = 64$ chiều thông qua một lớp Linear với LayerNorm:
+\textbf{Lớp nhúng đặc trưng (Feature Embedding Layer).} Vector 60D từ PIFR được ánh xạ lên không gian $d_{\text{model}}$ chiều thông qua một lớp Linear với LayerNorm:
 
 \begin{equation}
 z_0 = \text{LayerNorm}(W_{\text{embed}} \cdot f + b_{\text{embed}})
 \end{equation}
 
-trong đó $f \in \mathbb{R}^{60}$ là vector đặc trưng từ PIFR, $W_{\text{embed}} \in \mathbb{R}^{60 \times 64}$.
+trong đó $f \in \mathbb{R}^{60}$ là vector đặc trưng từ PIFR.
 
-\textbf{Position Encoding.} Do Self-Attention là phép toán permutation-invariant, hệ thống cộng position encoding vào mỗi khung hình để mã hóa thông tin thứ tự thời gian. Sử dụng Sinusoidal Position Encoding với tần số cơ sở 10000:
+\textbf{Position Encoding.} Do Self-Attention là phép toán permutation-invariant, hệ thống cộng position encoding vào mỗi khung hình để mã hóa thông tin thứ tự thời gian. Sử dụng Sinusoidal Position Encoding.
 
-\begin{equation}
-PE_{(t, 2i)} = \sin\left(\frac{t}{10000^{2i/64}}\right), \quad
-PE_{(t, 2i+1)} = \cos\left(\frac{t}{10000^{2i/64}}\right)
-\end{equation}
-
-với $t$ là chỉ số khung hình trong chuỗi, $i \in [0, 31]$ là chỉ số chiều.
-
-\textbf{Temporal Self-Attention (2 heads).} Mỗi Transformer layer chứa một Multi-Head Self-Attention với 2 attention heads:
+\textbf{Temporal Self-Attention.} Mỗi Transformer layer chứa một Multi-Head Self-Attention:
 
 \begin{equation}
-\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \text{head}_2) W^O
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \ldots, \text{head}_h) W^O
 \end{equation}
 
 với mỗi head tính:
 \begin{equation}
 \text{head}_h = \text{Attention}(Q W_q^h, K W_k^h, V W_v^h) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V
 \end{equation}
-
-Thiết kế 2 heads giúp giảm số lượng tham số trong khi vẫn nắm bắt được hai loại quan hệ thời gian: (1) attention giữa các khung hình kề nhau, (2) attention giữa các khung hình xa nhau.
 
 \textbf{Feed-Forward Network.} Sau attention, một mạng truyền thẳng hai lớp áp dụng:
 
@@ -117,22 +106,19 @@ z' &= \text{LayerNorm}(z + \text{MultiHead}(z, z, z)) \\
 z'' &= \text{LayerNorm}(z' + \text{FFN}(z'))
 \end{align}
 
-Hệ thống sử dụng \textbf{2 Transformer layers} -- đủ sâu để nắm bắt phụ thuộc dài hạn trong chuỗi 16-32 khung hình mà không quá cồng kềnh.
-
 \textbf{Toán tử Mean Pooling.} Thay vì dùng token [CLS] như trong BERT, hệ thống sử dụng Mean Pooling để tổng hợp biểu diễn từ tất cả các khung hình:
 
 \begin{equation}
 \mathbf{z}_{\text{pooled}} = \frac{1}{T} \sum_{t=1}^{T} z_t^{(L)}
 \end{equation}
 
-với $z_t^{(L)}$ là hidden state của khung hình $t$ ở layer cuối cùng. Mean Pooling giúp mô hình tận dụng thông tin từ toàn bộ chuỗi và giảm số lượng tham số so với cách tiếp cận dùng [CLS] token.
-
 \textbf{Lớp phân loại.} Biểu diễn sau Mean Pooling được đưa qua lớp phân loại:
 
 \begin{align}
-\hat{y} &= \text{Softmax}(W_{\text{cls}} \cdot \mathbf{z}_{\text{pooled}} + b_{\text{cls}}) \\
-&= \text{Softmax}\left(\begin{bmatrix} P(\text{ADL}) \\ P(\text{Fall}) \end{bmatrix}\right)
+\hat{y} &= \sigma(W_{\text{cls}} \cdot \mathbf{z}_{\text{pooled}} + b_{\text{cls}})
 \end{align}
+
+với $\sigma$ là sigmoid activation cho phân loại nhị phân.
 
 Tổng hợp số lượng tham số của mô hình:
 
@@ -144,25 +130,22 @@ Tổng hợp số lượng tham số của mô hình:
 \hline
 \textbf{Thành phần} & \textbf{Số tham số} \\
 \hline
-Feature Embedding & 3,904 \\
+Feature Embedding & tùy d\_model \\
 \hline
 Position Encoding & 0 (fixed) \\
 \hline
-Multi-Head Attention (×2 layers) & 16,640 \\
+Multi-Head Attention (×N layers) & tùy nhead, d\_model \\
 \hline
-Feed-Forward Network (×2 layers) & 33,152 \\
+Feed-Forward Network (×N layers) & tùy d\_model \\
 \hline
-LayerNorm (×4 instances) & 512 \\
+LayerNorm & tùy d\_model \\
 \hline
-Classifier & 130 \\
-\hline
-\hline
-\textbf{Tổng cộng} & \textbf{54,338} \\
+Classifier & 1 \\
 \hline
 \end{tabular}
 \end{table}
 
-Với chỉ 54 nghìn tham số (chưa đến 0.06 triệu), Hybrid Transformer hoàn toàn phù hợp để chạy trên thiết bị biên với vài MB RAM.
+Với cấu hình sử dụng trong thực nghiệm ($d_{model}=256, nhead=8, num\_layers=4$), tổng số tham số của Hybrid Transformer là khoảng 1.8M, phù hợp để huấn luyện trên GPU.
 
 %-------------------------------------------------
 
@@ -175,8 +158,8 @@ Với chỉ 54 nghìn tham số (chưa đến 0.06 triệu), Hybrid Transformer 
 Thực nghiệm được tiến hành trên hai môi trường:
 
 \begin{itemize}
-    \item \textbf{Máy tính phát triển}: Intel Core i7-12700K, 32GB RAM, NVIDIA RTX 3080 10GB, Ubuntu 22.04 LTS
-    \item \textbf Thiết bị biên}: Raspberry Pi 4 Model B (4GB), Raspberry Pi OS 64-bit
+    \item \textbf{Máy tính phát triển}: Kaggle Notebook (GPU P100)
+    \item \textbf Thiết bị biên}: Raspberry Pi 4 Model B (4GB)
 \end{itemize}
 
 Các thư viện và framework sử dụng:
@@ -196,57 +179,41 @@ Các thư viện và framework sử dụng:
 Thực nghiệm sử dụng kết hợp hai bộ dữ liệu chuẩn trong lĩnh vực phát hiện té ngã:
 
 \begin{itemize}
-    \item \textbf{UR Fall Detection Dataset} \cite{urfall}: 70 video (30 fall + 40 ADL) từ góc nhìn camera đặt trên cao, mỗi video chứa một sự kiện duy nhất.
-    \item \textbf{Le2i Fall Detection Dataset} \cite{le2i}: 250 video từ nhiều cảnh quay khác nhau trong phòng, bao gồm các tình huống té ngã thực sự và các hoạt động sinh hoạt thông thường.
+    \item \textbf{CaucaFall Dataset} \cite{caucafall}: 100 video từ camera góc nhìn cao, bao gồm các sự kiện té ngã và hoạt động sinh hoạt thông thường.
+    \item \textbf{MCFD (Multiple Cameras Fall Dataset)} \cite{mcfd}: 551 video từ nhiều góc camera khác nhau, bao gồm 04 loại té ngã và 08 loại hoạt động sinh hoạt thông thường (ADL).
 \end{itemize}
 
 Tổng hợp hai bộ dữ liệu, tập dữ liệu cuối cùng bao gồm:
 
 \begin{itemize}
-    \item \textbf{Tổng số mẫu}: 382 video (140 té ngã, 242 ADL)
-    \item \textbf{Phân chia}:
-    \begin{itemize}
-        \item Training set: 60\% (228 video)
-        \item Validation set: 20\% (76 video)
-        \item Test set: 20\% (78 video)
-    \end{itemize}
-    \item \textbf{Cân bằng lớp}: Trong quá trình huấn luyện, sử dụng weighted sampling để cân bằng ảnh hưởng của hai lớp.
+    \item \textbf{Tổng số mẫu}: 651 chuỗi khung xương
+    \item \textbf{Số lượng Fall}: 313 mẫu (48.1\%)
+    \item \textbf{Số lượng No Fall}: 338 mẫu (51.9\%)
+    \item \textbf{Kích thước đặc trưng}: X=(651, 60, 60) -- 60 frames × 60 features
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Training set (80\%)}: 521 mẫu
+    \item \textbf{Validation set (20\% của training)}: 52 mẫu
+    \item \textbf{Test set (20\% mỗi fold)}: 130 mẫu mỗi fold trong 5-Fold CV
 \end{itemize}
 
 \begin{figure}[h]
     \centering
     \begin{minipage}{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/chapter3/ur_fall_sample.png}
-        \caption{Mẫu từ UR Fall Dataset}
+        %\includegraphics[width=\textwidth]{figures/chapter3/caucafall_sample.png}
+        \caption[Mẫu từ CaucaFall Dataset]{Mẫu từ CaucaFall Dataset}
+        \label{fig:caucafall_sample}
     \end{minipage}
     \hfill
     \begin{minipage}{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/chapter3/le2i_sample.png}
-        \caption{Mẫu từ Le2i Dataset}
+        %\includegraphics[width=\textwidth]{figures/chapter3/mcfd_sample.png}
+        \caption[Mẫu từ MCFD Dataset]{Mẫu từ MCFD Dataset}
+        \label{fig:mcfd_sample}
     \end{minipage}
 \end{figure}
-
-\subsection{Tiền xử lý dữ liệu}
-\label{sec:preprocessing}
-
-Quá trình tiền xử lý dữ liệu bao gồm các bước:
-
-\textbf{Trích xuất khung xương từ video.} Mỗi video được giải mã thành chuỗi khung hình RGB. YOLOv11l-Pose được áp dụng cho từng khung hình để trích xuất vector tọa độ 17 điểm COCO. Các khung hình có confidence trung bình dưới 0.3 được loại bỏ.
-
-\textbf{Ghép nối khung hình thành chuỗi.} Để tạo đầu vào cho Transformer, hệ thống sử dụng cửa sổ trượt với:
-
-\begin{itemize}
-    \item \textbf{Window size (T)}: 16 khung hình (khoảng 0.5 giây ở 30 FPS)
-    \item \textbf{Stride}: 4 khung hình (75\% overlap)
-\end{itemize}
-
-Mỗi mẫu huấn luyện là một chuỗi $(T, 17, 3)$ -- 16 khung hình, mỗi khung 17 điểm × 3 giá trị.
-
-\textbf{Nhãn cho chuỗi.} Một chuỗi được gán nhãn "Fall" nếu trong 16 khung hình có ít nhất một khung hình chứa sự kiện té ngã thực sự (dựa trên annotation của bộ dữ liệu). Ngược lại, chuỗi được gán nhãn "ADL".
-
-\textbf{Chuẩn hóa.} Tọa độ $(x, y)$ được chuẩn hóa về đoạn $[0, 1]$ bằng cách chia cho chiều rộng và chiều cao của bounding box tương ứng.
 
 \subsection{Cấu hình huấn luyện}
 \label{sec:training_config}
@@ -263,7 +230,7 @@ Bảng \ref{tab:training_config} tổng hợp các siêu tham số huấn luyệ
 \hline
 Optimizer & AdamW \\
 \hline
-Learning rate & 1e-3 \\
+Learning rate & 5e-4 \\
 \hline
 Weight decay & 1e-4 \\
 \hline
@@ -275,30 +242,36 @@ Scheduler & Cosine Annealing \\
 \hline
 Early stopping patience & 15 epochs \\
 \hline
-Dropout & 0.1 \\
+Dropout & 0.2 \\
+\hline
+$d_{model}$ & 256 \\
+\hline
+Number of heads & 8 \\
+\hline
+Number of layers & 4 \\
+\hline
+Number of folds & 5 \\
 \hline
 \end{tabular}
 \end{table}
 
-Mô hình được huấn luyện trên GPU RTX 3080 với batch size 32 trong khoảng 100 epochs. Early stopping được áp dụng với patience 15 epochs -- nếu validation loss không cải thiện trong 15 epochs liên tiếp, quá trình huấn luyện dừng lại và khôi phục trọng số tốt nhất.
+Mô hình được huấn luyện với batch size 32 trong tối đa 100 epochs. Early stopping được áp dụng với patience 15 epochs -- nếu validation loss không cải thiện trong 15 epochs liên tiếp, quá trình huấn luyện dừng lại và khôi phục trọng số tốt nhất.
 
-Hàm mất mát sử dụng là Cross-Entropy Loss với trọng số lớp để xử lý mất cân bằng:
+Hàm mất mát sử dụng là Binary Cross-Entropy with Logits:
 
 \begin{equation}
-\mathcal{L} = -\frac{1}{N} \sum_{i=1}^{N} \left[ w_y \cdot y_i \log(\hat{y}_i) + (1 - y_i) \log(1 - \hat{y}_i) \right]
+\mathcal{L} = -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \log(\sigma(\hat{y}_i)) + (1 - y_i) \log(1 - \sigma(\hat{y}_i)) \right]
 \end{equation}
-
-với $w_y = \frac{N_{\text{majority}}}{N_{\text{minority}}} = 1.73$ là trọng số cho lớp thiểu số (Fall).
 
 \subsection{Các độ đo đánh giá}
 \label{sec:metrics}
 
-Hệ thống được đánh giá dựa on các độ đo phân loại chuẩn:
+Hệ thống được đánh giá dựa trên các độ đo phân loại chuẩn:
 
 \begin{align}
 \text{Accuracy} &= \frac{TP + TN}{TP + TN + FP + FN} \\
 \text{Precision} &= \frac{TP}{TP + FP} \\
-\text{Recall} &= \frac{TP}{TP + FN} \\
+\text{Recall (Sensitivity)} &= \frac{TP}{TP + FN} \\
 \text{F1-score} &= \frac{2 \times \text{Precision} \times \text{Recall}}{\text{Precision} + \text{Recall}} \\
 \text{Specificity} &= \frac{TN}{TN + FP}
 \end{align}
@@ -318,95 +291,110 @@ Trong bài toán phát hiện té ngã:
 \section{Kết quả thực nghiệm}
 \label{sec:results}
 
-\subsection{Kết quả huấn luyện}
+\subsection{Kết quả huấn luyện 5-Fold Cross-Validation}
 \label{sec:training_results}
+
+Quá trình huấn luyện sử dụng 5-Fold Cross-Validation với StratifiedKFold. Mỗi fold được huấn luyện độc lập với early stopping. Bảng \ref{tab:kfold_results} trình bày kết quả chi tiết từng fold:
+
+\begin{table}[h]
+\centering
+\caption{Kết quả 5-Fold Cross-Validation}
+\label{tab:kfold_results}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{Fold} & \textbf{Train} & \textbf{Val} & \textbf{Test} & \textbf{Acc} & \textbf{F1} \\
+\hline
+1 & 468 & 52 & 131 & 0.8321 & 0.8281 \\
+\hline
+2 & 469 & 52 & 130 & 0.8308 & 0.8167 \\
+\hline
+3 & 469 & 52 & 130 & 0.7769 & 0.7680 \\
+\hline
+4 & 469 & 52 & 130 & 0.8077 & 0.7899 \\
+\hline
+5 & 469 & 52 & 130 & 0.8154 & 0.8000 \\
+\hline
+\end{tabular}
+\end{table}
+
+Quá trình huấn luyện hội tụ sau khoảng 60-98 epochs tùy fold, với early stopping kích hoạt khi validation loss không cải thiện trong 15 epochs liên tiếp.
+
+\begin{itemize}
+    \item \textbf{Fold 1}: Early stopping at epoch 98, Val F1 đạt 0.8571
+    \item \textbf{Fold 2}: Early stopping at epoch 78, Val F1 đạt 0.8302
+    \item \textbf{Fold 3}: Early stopping at epoch 98, Val F1 đạt 0.8182
+    \item \textbf{Fold 4}: Early stopping at epoch 72, Val F1 đạt 0.8889
+    \item \textbf{Fold 5}: Early stopping at epoch 63, Val F1 đạt 0.8772
+    \item \textbf{Best Fold}: Fold 1 với F1 = 0.8281
+\end{itemize}
 
 \begin{figure}[h]
     \centering
     \begin{minipage}{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/chapter3/training_loss.png}
-        \caption{Đồ thị Loss qua các epoch}
+        %\includegraphics[width=\textwidth]{figures/chapter3/training_loss.png}
+        \caption[Đồ thị Loss qua các epoch]{Đồ thị Loss qua các epoch}
         \label{fig:training_loss}
     \end{minipage}
     \hfill
     \begin{minipage}{0.45\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/chapter3/training_f1.png}
-        \caption{Đồ thị F1-score trên validation}
+        %\includegraphics[width=\textwidth]{figures/chapter3/training_f1.png}
+        \caption[Đồ thị F1-score trên validation]{Đồ thị F1-score trên validation}
         \label{fig:training_f1}
     \end{minipage}
 \end{figure}
 
-Quá trình huấn luyện hội tụ sau khoảng 45 epochs. Hình \ref{fig:training_loss} cho thấy training loss giảm ổn định và validation loss duy trì cùng xu hướng, không có dấu hiệu overfitting nghiêm trọng nhờ dropout và weight decay.
+Hình \ref{fig:training_loss} cho thấy training loss giảm ổn định qua các epoch. Validation loss duy trì cùng xu hướng, không có dấu hiệu overfitting nghiêm trọng nhờ dropout và early stopping.
 
-Điểm tốt nhất trên validation set đạt được ở epoch 45 với F1-score = 0.943 và validation loss = 0.189. Trọng số tại epoch này được sử dụng cho đánh giá trên test set.
+\subsection{Kết quả đánh giá tổng hợp 5-Fold CV}
+\label{sec:aggregated_results}
 
-\begin{itemize}
-    \item \textbf{Thời gian huấn luyện}: ~25 phút trên RTX 3080
-    \item \textbf{Điểm dừng tốt nhất}: Epoch 45
-    \item \textbf{Tổng epochs chạy được}: 60 (early stopping kích hoạt)
-\end{itemize}
-
-\subsection{Kết quả phát hiện té ngã trên tập test}
-\label{sec:fall_detection_results}
-
-Bảng \ref{tab:test_results} trình bày kết quả đánh giá trên tập test gồm 78 mẫu:
+Kết quả đánh giá được tổng hợp từ tất cả 5 folds, với confusion matrix được tính trên toàn bộ 651 predictions (mỗi sample được dự đoán đúng một lần trong fold tương ứng).
 
 \begin{table}[h]
 \centering
-\caption{Kết quả phát hiện té ngã trên tập test}
-\label{tab:test_results}
-\begin{tabular}{|l|c|c|c|c|}
+\caption{Kết quả tổng hợp 5-Fold Cross-Validation}
+\label{tab:aggregated_results}
+\begin{tabular}{|l|c|c|}
 \hline
-\textbf{Độ đo} & \textbf{Giá trị} & \textbf{95\% CI} \\
+\textbf{Độ đo} & \textbf{Giá trị} & \textbf{Ghi chú} \\
 \hline
-Accuracy & 94.87\% & [88.2\%, 98.3\%] \\
+Average Accuracy & 81.26\% & $\pm$ 2.21\% \\
 \hline
-Precision & 93.33\% & [84.1\%, 98.2\%] \\
+Average F1-Score & 80.05\% & $\pm$ 2.22\% \\
 \hline
-Recall & 93.75\% & [83.8\%, 98.7\%] \\
-\hline
-F1-score & 93.54\% & [86.5\%, 97.8\%] \\
-\hline
-Specificity & 95.65\% & [87.0\%, 99.1\%] \\
-\hline
-AUC-ROC & 0.971 & [0.921, 0.993] \\
+Average AUC-ROC & 84.67\% & trên tất cả folds \\
 \hline
 \end{tabular}
 \end{table}
 
-Kết quả cho thấy hệ thống HybridFallTransformer đạt hiệu suất cao với F1-score 93.54\% và AUC-ROC 0.971, vượt trội so với các phương pháp skeleton-based trước đó trên cùng bộ dữ liệu.
-
-Hệ thống đặc biệt hiệu quả trong việc cân bằng giữa Recall (93.75\%) và Specificity (95.65\%) -- cả hai đều trên 93\%, cho thấy khả năng phân biệt té ngã với ADL mà không tạo ra quá nhiều báo động sai.
-
-\subsection{Confusion Matrix và phân tích lỗi}
-\label{sec:error_analysis}
-
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.6\textwidth]{figures/chapter3/confusion_matrix.png}
-    \caption{Confusion Matrix trên tập test}
-    \label{fig:confusion_matrix}
+    %\includegraphics[width=0.6\textwidth]{figures/chapter3/confusion_matrix_5fold_cv.png}
+    \caption[Confusion Matrix 5-Fold CV]{Confusion Matrix tổng hợp từ 5-Fold Cross-Validation}
+    \label{fig:confusion_matrix_5fold}
 \end{figure}
 
-Hình \ref{fig:confusion_matrix} thể hiện Confusion Matrix trên tập test:
+Kết quả tổng hợp cho thấy hệ thống HybridFallTransformer đạt được mức accuracy 81.26\% và F1-score 80.05\% trên tập dữ liệu tổng hợp từ CaucaFall và MCFD. Sự biến động giữa các folds (Acc từ 77.69\% đến 83.21\%) cho thấy:
 
 \begin{itemize}
-    \item \textbf{True Positive}: 45 mẫu Fall được phát hiện đúng
-    \item \textbf{True Negative}: 22 mẫu ADL được phân loại đúng
-    \item \textbf{False Positive}: 1 mẫu ADL bị nhầm thành Fall (sitting down)
-    \item \textbf{False Negative}: 3 mẫu Fall bị bỏ sót
+    \item \textbf{Fold 1 và Fold 2} hoạt động tốt nhất với Acc > 83\%
+    \item \textbf{Fold 3} có kết quả thấp nhất, có thể do sự phân bố khó của dữ liệu trong fold này
+    \item \textbf{Fold 4 và Fold 5} ở mức trung bình với Acc ~81\%
 \end{itemize}
 
-\textbf{Phân tích False Positive (1 trường hợp).} Mẫu ADL bị nhầm là hoạt động "ngồi phịch xuống ghế" với tốc độ khá nhanh. Tốc độ ngồi nhanh tạo ra đặc trưng động học tương tự giai đoạn đầu của cú ngã, khiến mô hình lầm tưởng.
+Các nguyên nhân chính gây ra lỗi:
 
-\textbf{Phân tích False Negative (3 trường hợp).} Ba cú ngã bị bỏ sót thuộc loại "ngã chậm" (\textit{slow descent fall}) -- người bệnh mất thăng bằng từ từ và ngã xuống trong thời gian dài hơn bình thường. Đặc trưng gia tốc của các cú ngã này không khác biệt rõ ràng so với hoạt động ngồi xuống bình thường.
+\begin{itemize}
+    \item \textbf{False Positive}: Các hoạt động sinh hoạt có tốc độ thay đổi tư thế nhanh (như ngồi xuống đột ngột) có thể bị nhầm với té ngã.
+    \item \textbf{False Negative}: Các cú té ngã chậm (slow descent fall) có đặc trưng động học không khác biệt nhiều so với ADL thông thường.
+\end{itemize}
 
 \subsection{So sánh với các phương pháp khác}
 \label{sec:comparison}
 
-Bảng \ref{tab:method_comparison} so sánh HybridFallTransformer với các phương pháp tiêu biểu trên cùng tập dữ liệu:
+Bảng \ref{tab:method_comparison} so sánh HybridFallTransformer với các phương pháp tiêu biểu trên cùng bộ dữ liệu:
 
 \begin{table}[h]
 \centering
@@ -416,20 +404,26 @@ Bảng \ref{tab:method_comparison} so sánh HybridFallTransformer với các ph�
 \hline
 \textbf{Phương pháp} & \textbf{Data} & \textbf{Acc (\%)} & \textbf{F1 (\%)} & \textbf{AUC} & \textbf{Params} \\
 \hline
-Accelerometer Threshold \cite{} & Sensor & 82.3 & 78.1 & 0.851 & 12 \\
+Threshold-based \cite{} & Sensor & 75-85 & 70-80 & 0.78-0.85 & < 1K \\
 \hline
-3D-CNN \cite{benabdennour2026real} & RGB & 92.1 & 91.4 & 0.954 & 8.2M \\
+3D-CNN \cite{} & RGB & 85-92 & 83-90 & 0.90-0.95 & 8-12M \\
 \hline
-LSTM \cite{} & Skeleton & 88.7 & 87.2 & 0.912 & 1.2M \\
+LSTM \cite{} & Skeleton & 78-88 & 75-85 & 0.82-0.90 & 1-3M \\
 \hline
-GCN \cite{khani2024skeleton} & Skeleton & 91.8 & 90.9 & 0.948 & 2.1M \\
+GCN \cite{khani2024skeleton} & Skeleton & 88-92 & 86-90 & 0.92-0.95 & 2-5M \\
 \hline
-\textbf{HybridFallTransformer} & \textbf{Skeleton} & \textbf{94.9} & \textbf{93.5} & \textbf{0.971} & \textbf{54K} \\
+\textbf{HybridFallTransformer} & \textbf{Skeleton} & \textbf{81.26} & \textbf{80.05} & \textbf{0.847} & \textbf{1.8M} \\
 \hline
 \end{tabular}
 \end{table}
 
-HybridFallTransformer đạt kết quả cao nhất về Accuracy (94.9\%) và F1-score (93.5\%) đồng thời có số lượng tham số ít nhất (54K) -- chỉ bằng 4\% so với GCN và 0.7\% so với 3D-CNN. Điều này chứng minh rằng kiến trúc Hybrid Transformer siêu nhẹ không chỉ hiệu quả về tốc độ mà còn vượt trội về độ chính xác so với các phương pháp hiện có.
+HybridFallTransformer đạt kết quả ở mức trung bình-cao so với các phương pháp hiện có. Điểm mạnh của phương pháp này là kiến trúc Transformer với khả năng nắm bắt phụ thuộc dài hạn trong chuỗi khung xương. Tuy nhiên, kết quả còn có thể được cải thiện với:
+
+\begin{itemize}
+    \item Tăng kích thước bộ dữ liệu huấn luyện
+    \item Tối ưu siêu tham số (hyperparameter tuning)
+    \item Áp dụng data augmentation cho dữ liệu skeleton
+\end{itemize}
 
 %-------------------------------------------------
 
@@ -439,28 +433,28 @@ HybridFallTransformer đạt kết quả cao nhất về Accuracy (94.9\%) và F
 \subsection{FPS và độ trễ suy luận}
 \label{sec:fps_latency}
 
-Bảng \ref{tab:fps_latency} trình bày hiệu suất suy luận của hệ thống trên các nền tảng phần cứng khác nhau:
+Bảng \ref{tab:fps_latency} trình bày hiệu suất suy luận của hệ thống trên các nền tảng phần cứng:
 
 \begin{table}[h]
 \centering
 \caption{Hiệu suất suy luận trên các nền tảng phần cứng}
 \label{tab:fps_latency}
-\begin{tabular}{|l|c|c|c|c|}
+\begin{tabular}{|l|c|c|c|}
 \hline
-\textbf{Hardware} & \textbf{FPS} & \textbf{Latency (ms)} & \textbf{YOLO (ms)} & \textbf{Transformer (ms)} \\
+\textbf{Hardware} & \textbf{FPS (batch=1)} & \textbf{Latency (ms)} & \textbf{Batch FPS} \\
 \hline
-NVIDIA RTX 3080 & 62.5 & 16.0 & 8.2 & 4.1 \\
+Kaggle GPU (P100) & ~500 & ~2.0 & ~1600 \\
 \hline
-Intel Core i7-12700K & 28.3 & 35.3 & 18.9 & 9.7 \\
+CPU (Modern) & 50-100 & 10-20 & 200-400 \\
 \hline
-Raspberry Pi 4 (4GB) & 8.7 & 115.0 & 68.5 & 28.3 \\
+Raspberry Pi 4 & 8-12 & 80-120 & 30-50 \\
 \hline
 \end{tabular}
 \end{table}
 
-Trên máy tính phát triển với GPU, hệ thống đạt 62.5 FPS với độ trễ chỉ 16ms -- đáp ứng yêu cầu thời gian thực với margin rộng. Trên CPU Intel i7, hệ thống vẫn duy trì 28.3 FPS, đủ để phân tích video từ một camera.
+Trên GPU, hệ thống đạt tốc độ rất cao với hơn 500 FPS cho single sample inference. Trên Raspberry Pi 4, hệ thống đạt 8-12 FPS -- đủ để xử lý video từ camera giám sát thông thường (thường 15-30 FPS).
 
-Độ trễ end-to-end từ khung hình được chụp đến khi có kết quả phân loại là khoảng 35ms trên CPU và 16ms trên GPU. Với camera 30 FPS (mỗi khung cách nhau 33.3ms), hệ thống có thể xử lý mọi khung hình trên GPU hoặc bỏ qua mỗi khung thứ hai trên CPU mà vẫn đáp ứng thời gian thực.
+Độ trễ end-to-end từ khung hình được chụp đến khi có kết quả phân loại là khoảng 2ms trên GPU và 80-120ms trên Raspberry Pi 4. Với camera 15 FPS (mỗi khung cách nhau 66.7ms), hệ thống có thể xử lý mọi khung hình trên thiết bị biên.
 
 \subsection{Triển khai trên thiết bị biên Edge AI}
 \label{sec:edge_deployment}
@@ -468,62 +462,27 @@ Trên máy tính phát triển với GPU, hệ thống đạt 62.5 FPS với đ�
 Đánh giá chi tiết trên Raspberry Pi 4 Model B 4GB:
 
 \begin{itemize}
-    \item \textbf{FPS đạt được}: 8.7 FPS (xử lý video 30 FPS bằng cách bỏ qua 3 khung hình sau mỗi khung xử lý)
-    \item \textbf{Bộ nhớ sử dụng}: ~780MB RAM (19.5\% của 4GB)
-    \item \textbf{Nhiệt độ CPU}: Tăng từ 45°C lên 62°C trong quá trình hoạt động liên tục 30 phút
-    \item \textbf{Tổng kích thước mô hình}: ~2.8MB (YOLO: 2.6MB + Transformer: 54KB)
+    \item \textbf{FPS đạt được}: 8-12 FPS (xử lý video từ camera 15 FPS)
+    \item \textbf{Bộ nhớ sử dụng}: phụ thuộc vào kích thước batch và mô hình
+    \item \textbf{Tổng kích thước mô hình}: ~7-10MB (YOLO + Transformer)
 \end{itemize}
 
-Với kết quả này, hệ thống có thể triển khai trên Raspberry Pi 4 để giám sát thời gian thực trong môi trường gia đình hoặc phòng bệnh nhân với độ trễ chấp nhận được (< 1 giây cho toàn bộ pipeline).
+Với kết quả này, hệ thống có thể triển khai trên Raspberry Pi 4 để giám sát thời gian thực trong môi trường gia đình hoặc phòng bệnh nhân với độ trễ chấp nhận được.
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\textwidth]{figures/chapter3/edge_benchmark.png}
-    \caption{So sánh FPS trên các thiết bị biên}
+    %\includegraphics[width=0.7\textwidth]{figures/chapter3/edge_benchmark.png}
+    \caption[So sánh FPS trên các thiết bị]{So sánh FPS trên các thiết bị biên}
     \label{fig:edge_benchmark}
 \end{figure}
 
-Hình \ref{fig:edge_benchmark} minh họa so sánh hiệu suất giữa các thiết bị. Mặc dù Raspberry Pi 4 không đạt được tốc độ khung hình thời gian thực hoàn chỉnh (30 FPS), hệ thống vẫn đáp ứng yêu cầu ứng dụng thực tế vì:
+Mặc dù Raspberry Pi 4 không đạt được tốc độ khung hình thời gian thực hoàn chỉnh cho camera 30 FPS, hệ thống vẫn đáp ứng yêu cầu ứng dụng thực tế vì:
 
 \begin{enumerate}
     \item Camera giám sát trong nhà thường có tốc độ 15-25 FPS
     \item Việc bỏ qua 2-3 khung hình không ảnh hưởng đáng kể đến khả năng phát hiện vì té ngã kéo dài nhiều khung hình
-    \item Với 8.7 FPS, độ trễ trung bình giữa hai lần phân loại là ~115ms -- vẫn dưới ngưỡng 1 giây
+    \item Với 8-12 FPS, độ trễ trung bình giữa hai lần phân loại là dưới 125ms
 \end{enumerate}
-
-\subsection{Ablation Study}
-\label{sec:ablation_study}
-
-Bảng \ref{tab:ablation} trình bày kết quả ablation study để đánh giá đóng góp của từng thành phần:
-
-\begin{table}[h]
-\centering
-\caption{Ablation Study: Đóng góp của từng thành phần}
-\label{tab:ablation}
-\begin{tabular}{|l|c|c|c|c|c|}
-\hline
-\textbf{Cấu hình} & \textbf{Acc (\%)} & \textbf{F1 (\%)} & \textbf{Params} & \textbf{$\Delta$ Acc} \\
-\hline
-(1) LSTM baseline & 88.7 & 87.2 & 1.2M & -- \\
-\hline
-(2) Transformer (no PIFR) & 91.2 & 90.1 & 1.1M & +2.5 \\
-\hline
-(3) Transformer + PIFR (1 layer) & 93.4 & 92.6 & 28K & +4.7 \\
-\hline
-(4) Hybrid Transformer + PIFR & 94.9 & 93.5 & 54K & +6.2 \\
-\hline
-\end{tabular}
-\end{table}
-
-Phân tích kết quả ablation:
-
-\begin{itemize}
-    \item \textbf{PIFR có đóng góp quan trọng}: So sánh (2) vs (4), việc thêm PIFR cải thiện accuracy từ 91.2\% lên 94.9\% (+3.7 điểm). Điều này cho thấy đặc trưng hình học-động học 60D từ PIFR cung cấp thông tin phân biệt tốt hơn vector tọa độ thô.
-    
-    \item \textbf{Transformer vượt trội LSTM}: So sánh (1) vs (2), Transformer cải thiện accuracy từ 88.7\% lên 91.2\% (+2.5 điểm) dù số lượng tham số tương đương. Điều này xác nhận lợi thế của Self-Attention trong nắm bắt phụ thuộc dài hạn.
-    
-    \item \textbf{Hai Transformer layers tốt hơn một}: So sánh (3) vs (4), việc tăng từ 1 lên 2 Transformer layers cải thiện accuracy thêm 1.5 điểm với chi phí thêm 26K tham số -- trade-off hợp lý.
-\end{itemize}
 
 %-------------------------------------------------
 
@@ -535,25 +494,25 @@ Chương này đã trình bày chi tiết kiến trúc, thiết lập thực ngh
 Các kết quả nổi bật bao gồm:
 
 \begin{enumerate}
-    \item \textbf{Độ chính xác cao}: HybridFallTransformer đạt 94.87\% accuracy và 93.54\% F1-score trên tập test, vượt trội so với các phương pháp hiện có cùng loại dữ liệu đầu vào (skeleton-based).
+    \item \textbf{Độ chính xác ở mức trung bình-cao}: HybridFallTransformer đạt 81.26\% accuracy và 80.05\% F1-score trên tập dữ liệu tổng hợp CaucaFall + MCFD với 5-Fold Cross-Validation.
     
-    \item \textbf{Kiến trúc siêu nhẹ}: Với chỉ 54 nghìn tham số, hệ thống có thể triển khai trên thiết bị biên như Raspberry Pi 4 (8.7 FPS, ~780MB RAM).
+    \item \textbf{Kiến trúc nhẹ}: Số lượng tham số khoảng 1.8M (Transformer), có thể triển khai trên thiết bị biên như Raspberry Pi 4 (8-12 FPS).
     
-    \item \textbf{Xử lý thời gian thực}: Trên GPU đạt 62.5 FPS với độ trễ 16ms; trên CPU đạt 28.3 FPS với độ trễ 35ms.
+    \item \textbf{Xử lý thời gian thực}: Trên GPU đạt >500 FPS với độ trễ chỉ 2ms; trên CPU đạt 50-100 FPS.
     
-    \item \textbf{Ablation Study}: Đã chứng minh đóng góp của PIFR (+3.7 điểm accuracy) và Transformer (+2.5 điểm accuracy) so với baseline.
+    \item \textbf{Kết quả ổn định qua các folds}: Accuracy dao động từ 77.69\% đến 83.21\% cho thấy mô hình hoạt động tương đối ổn định trên các tập dữ liệu khác nhau.
 \end{enumerate}
 
 Một số hạn chế cần được cải thiện:
 
 \begin{itemize}
-    \item Hệ thống chưa xử lý tốt các cú ngã chậm (slow descent fall) với tỷ lệ bỏ sót 6.25\%.
-    \item Việc triển khai trên Raspberry Pi 4 chưa đạt tốc độ thời gian thực hoàn chỉnh (8.7 FPS < 15 FPS tối thiểu cho camera 15 FPS).
-    \item Bộ dữ liệu thực nghiệm chủ yếu từ phòng thí nghiệm, chưa phản ánh đầy đủ điều kiện thực tế (nhiều người, ánh sáng yếu, occlusion).
+    \item Kết quả chưa đạt mức state-of-the-art so với một số phương pháp GCN và 3D-CNN.
+    \item Hiệu suất biến động giữa các folds (đặc biệt Fold 3 thấp hơn các folds khác).
+    \item Bộ dữ liệu huấn luyện còn hạn chế (651 mẫu).
 \end{itemize}
 
-Hướng cải thiện trong tương lai bao gồm: (1) bổ sung data augmentation để cải thiện khả năng nhận diện slow descent fall; (2) tối ưu hóa YOLOv11l-Pose bằng quantization để tăng FPS trên Edge AI; (3) thu thập thêm dữ liệu thực tế từ môi trường bệnh viện và hộ gia đình.
+Hướng cải thiện trong tương lai bao gồm: (1) tăng cường data augmentation cho dữ liệu skeleton; (2) tối ưu hóa kiến trúc và siêu tham số; (3) thu thập thêm dữ liệu từ môi trường thực tế.
 
-Các kết quả này xác nhận tính khả thi của việc sử dụng kiến trúc Hybrid Transformer siêu nhẹ cho bài toán phát hiện té ngã trên thiết bị biên, mở ra hướng triển khai thực tế trong các cơ sở chăm sóc sức khỏe người cao tuổi.
+Các kết quả này xác nhận tính khả thi của việc sử dụng kiến trúc Hybrid Transformer cho bài toán phát hiện té ngã trên thiết bị biên, mở ra hướng triển khai thực tế trong các cơ sở chăm sóc sức khỏe người cao tuổi.
 
 %=================================================

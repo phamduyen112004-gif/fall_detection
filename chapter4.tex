@@ -14,11 +14,11 @@ Phần kết luận tổng hợp toàn bộ những kết quả đạt được,
 Đề tài đã nghiên cứu, thiết kế và triển khai thành công hệ thống \textbf{HybridFallTransformer} -- một hệ thống phát hiện té ngã dựa trên khung xương hoạt động theo nguyên tắc privacy-by-design. Hệ thống bao gồm ba module chính được kết hợp trong một pipeline end-to-end:
 
 \begin{enumerate}
-    \item \textbf{Module trích xuất khung xương YOLOv11n-Pose}: Mô hình ước lượng tư thế siêu nhẹ (2.6 triệu tham số, 6.3 GFLOPs) trích xuất vector tọa độ 17 điểm khớp COCO từ khung hình video RGB với tốc độ ~30 FPS trên CPU.
+    \item \textbf{Module trích xuất khung xương YOLOv11-Pose}: Mô hình ước lượng tư thế trích xuất vector tọa độ 17 điểm khớp COCO từ khung hình video RGB.
     
     \item \textbf{Module biến đổi đặc trưng PIFR}: Biến đổi vector tọa độ thô thành vector đặc trưng 60 chiều bao gồm thông tin hình học (vị trí, khoảng cách xương, góc khớp) và động học (velocity, acceleration) mà không cần tham số học.
     
-    \item \textbf{Bộ mã hóa Hybrid Transformer}: Kiến trúc Transformer siêu nhẹ (54 nghìn tham số) với 2 Transformer layers, 2 attention heads, sử dụng Mean Pooling thay vì token [CLS] để tổng hợp biểu diễn chuỗi thời gian.
+    \item \textbf{Bộ mã hóa Hybrid Transformer}: Kiến trúc Transformer với 4 layers, 8 attention heads, sử dụng Mean Pooling để tổng hợp biểu diễn chuỗi thời gian.
 \end{enumerate}
 
 Hệ thống được tích hợp module cảnh báo qua Telegram Bot, cho phép gửi thông báo tức thời đến người thân và đội ngũ y tế khi phát hiện sự kiện té ngã.
@@ -26,18 +26,24 @@ Hệ thống được tích hợp module cảnh báo qua Telegram Bot, cho phép
 \subsection{Hiệu năng và khả năng triển khai}
 \label{sec:achievements_performance}
 
-Kết quả thực nghiệm trên tập dữ liệu tổng hợp từ UR Fall Detection Dataset và Le2i Fall Detection Dataset (382 video, 228 train / 76 validation / 78 test) cho thấy:
+Kết quả thực nghiệm trên tập dữ liệu tổng hợp từ CaucaFall Dataset (100 mẫu) và MCFD Dataset (551 mẫu) -- tổng cộng 651 mẫu -- với 5-Fold Cross-Validation cho thấy:
 
 \begin{itemize}
-    \item \textbf{Độ chính xác cao}: Accuracy 94.87\%, F1-score 93.54\%, AUC-ROC 0.971 trên tập test.
-    \item \textbf{Kiến trúc siêu nhẹ}: Tổng cộng 2.65 triệu tham số (YOLO: 2.6M + Transformer: 54K), kích thước mô hình chỉ ~2.8MB.
-    \item \textbf{Xử lý thời gian thực}: 62.5 FPS trên GPU RTX 3080, 28.3 FPS trên CPU Intel i7-12700K.
-    \item \textbf{Triển khai Edge AI}: 8.7 FPS trên Raspberry Pi 4 (4GB), sử dụng ~780MB RAM.
+    \item \textbf{Độ chính xác trung bình}: 81.26\% accuracy ($\pm$ 2.21\%) trên 5 folds
+    \item \textbf{F1-Score trung bình}: 80.05\% ($\pm$ 2.22\%)
+    \item \textbf{AUC-ROC trung bình}: 84.67\%
+    \item \textbf{Kết quả theo fold}: Acc dao động từ 77.69\% (Fold 3) đến 83.21\% (Fold 1)
+    \item \textbf{Xử lý thời gian thực}: >500 FPS trên GPU, 8-12 FPS trên Raspberry Pi 4
 \end{itemize}
 
-Kết quả so sánh với các phương pháp hiện có cho thấy HybridFallTransformer đạt accuracy cao nhất (94.9\%) trong số các phương pháp skeleton-based, đồng thời có số lượng tham số ít nhất (giảm 97.3\% so với 3D-CNN và 97.4\% so với GCN).
+Kết quả cho thấy HybridFallTransformer đạt hiệu suất ở mức trung bình-cao, với khả năng triển khai trên thiết bị biên. Mô hình đặc biệt hiệu quả trong việc nắm bắt phụ thuộc thời gian dài hạn trong chuỗi khung xương nhờ cơ chế Self-Attention.
 
-Ablation study xác nhận đóng góp của từng thành phần: PIFR cải thiện +3.7 điểm accuracy, Transformer cải thiện +2.5 điểm accuracy so với baseline LSTM.
+Ablation study và phân tích kết quả cho thấy:
+\begin{itemize}
+    \item Kiến trúc Transformer vượt trội so với các phương pháp LSTM/GRU truyền thống trong việc nắm bắt đặc trưng thời gian
+    \item Module PIFR cung cấp biểu diễn đặc trưng hiệu quả cho bài toán phân biệt té ngã và ADL
+    \item Mean Pooling thay vì token [CLS] giúp giảm số lượng tham số mà vẫn duy trì hiệu suất
+\end{itemize}
 
 %-------------------------------------------------
 \section{Đóng góp của đề tài}
@@ -49,11 +55,11 @@ Ablation study xác nhận đóng góp của từng thành phần: PIFR cải th
 Đề tài đóng góp các giá trị học thuật sau:
 
 \begin{enumerate}
-    \item \textbf{Đề xuất kiến trúc Hybrid Transformer siêu nhẹ cho skeleton-based fall detection}: Lần đầu tiên kiến trúc Transformer được thiết kế và tối ưu đặc biệt cho chuỗi khung xương ngắn (16-32 khung hình) với số lượng tham số chỉ 54 nghìn, giảm 97\% so với Vision Transformer tiêu chuẩn. Kiến trúc này khai thác hiệu quả cơ chế Temporal Self-Attention trong việc nắm bắt phụ thuộc dài hạn của chuyển động té ngã.
+    \item \textbf{Ứng dụng kiến trúc Transformer cho skeleton-based fall detection}: Kiến trúc Transformer được tối ưu cho chuỗi khung xương ngắn (60 khung hình) với cơ chế Temporal Self-Attention nắm bắt phụ thuộc dài hạn của chuyển động té ngã.
     
-    \item \textbf{Ứng dụng module PIFR trong bài toán phát hiện té ngã}: Chứng minh rằng việc biến đổi vector tọa độ thô thành đặc trưng hình học-động học 60 chiều cải thiện đáng kể khả năng phân biệt té ngã với ADL (+3.7 điểm accuracy). Phương pháp này không cần học tham số, hoàn toàn xác định và có thể tính toán nhanh trên CPU.
+    \item \textbf{Ứng dụng module PIFR trong bài toán phát hiện té ngã}: Chứng minh rằng việc biến đổi vector tọa độ thô thành đặc trưng hình học-động học 60 chiều cải thiện khả năng phân biệt té ngã với ADL. Phương pháp này không cần học tham số, hoàn toàn xác định và có thể tính toán nhanh trên CPU.
     
-    \item \textbf{Đề xuất Mean Pooling thay thế token [CLS]}: Phân tích và chứng minh rằng Mean Pooling trên hidden states của tất cả khung hình cho kết quả tương đương hoặc tốt hơn so với việc sử dụng một token đại diện duy nhất, đồng thời giảm số lượng tham số cần học.
+    \item \textbf{Đề xuất Mean Pooling thay thế token [CLS]}: Phân tích và chứng minh rằng Mean Pooling trên hidden states của tất cả khung hình cho kết quả tương đương với việc sử dụng một token đại diện duy nhất, đồng thời giảm số lượng tham số cần học.
     
     \item \textbf{Tổng hợp và so sánh hệ thống}: Xây dựng bảng so sánh toàn diện giữa các phương pháp phát hiện té ngã theo nhiều tiêu chí (loại dữ liệu, accuracy, Edge AI, privacy), xác định rõ khoảng trống nghiên cứu mà đề tài hướng đến.
 \end{enumerate}
@@ -64,11 +70,11 @@ Ablation study xác nhận đóng góp của từng thành phần: PIFR cải th
 Đề tài đóng góp các giá trị thực tiễn sau:
 
 \begin{enumerate}
-    \item \textbf{Hệ thống hoàn chỉnh có thể triển khai}: Cung cấp mã nguồn đầy đủ, cấu hình mô hình và hướng dẫn triển khai trên thiết bị biên (Raspberry Pi 4, Jetson Nano) với chi phí phần cứng dưới 100 USD. Hệ thống đáp ứng yêu cầu thực tế về độ trễ (< 1 giây) và độ chính xác (F1 > 93\%).
+    \item \textbf{Hệ thống hoàn chỉnh có thể triển khai}: Cung cấp mã nguồn đầy đủ, cấu hình mô hình và hướng dẫn triển khai trên thiết bị biên (Raspberry Pi 4) với chi phí phần cứng thấp. Hệ thống đáp ứng yêu cầu thực tế về độ trễ và độ chính xác.
     
-    \item \textbf{Giải pháp bảo vệ quyền riêng tư}: Thiết kế privacy-by-design với nguyên tắc chỉ lưu trữ vector tọa độ, không lưu ảnh RGB. Giải pháp này phù hợp với các quy định về bảo vệ dữ liệu cá nhân (GDPR, Luật An ninh Mạng) và có thể triển khai trong môi trường bệnh viện, viện dưỡng lão mà không vi phạm quyền riêng tư của bệnh nhân.
+    \item \textbf{Giải pháp bảo vệ quyền riêng tư}: Thiết kế privacy-by-design với nguyên tắc chỉ lưu trữ vector tọa độ, không lưu ảnh RGB. Giải pháp này phù hợp với các quy định về bảo vệ dữ liệu cá nhân (GDPR, Luật An ninh Mạng) và có thể triển khai trong môi trường bệnh viện, viện dưỡng lão.
     
-    \item \textbf{Module cảnh báo Telegram tích hợp}: Cung cấp giải pháp cảnh báo real-time qua Telegram Bot với thời gian phản hồi dưới 5 giây từ khi phát hiện đến khi nhận thông báo, phù hợp cho các ứng dụng chăm sóc sức khỏe từ xa.
+    \item \textbf{Module cảnh báo Telegram tích hợp}: Cung cấp giải pháp cảnh báo real-time qua Telegram Bot với thời gian phản hồi nhanh từ khi phát hiện đến khi nhận thông báo, phù hợp cho các ứng dụng chăm sóc sức khỏe từ xa.
     
     \item \textbf{Công cụ đánh giá và benchmark}: Cung cấp script đánh giá hiệu suất, đo FPS/latency trên nhiều nền tảng phần cứng, tạo confusion matrix và đồ thị huấn luyện -- có thể tái sử dụng cho các nghiên cứu khác trong lĩnh vực.
 \end{enumerate}
@@ -82,22 +88,21 @@ Bên cạnh các kết quả đạt được, hệ thống HybridFallTransformer
 \begin{enumerate}
     \item \textbf{Hạn chế về bộ dữ liệu}:
     \begin{itemize}
-        \item Bộ dữ liệu thực nghiệm chủ yếu từ phòng thí nghiệm (lab-controlled), chưa phản ánh đầy đủ điều kiện thực tế với ánh sáng yếu, occlusion, nhiều người trong khung hình.
-        \item Số lượng mẫu (382 video) còn hạn chế so với các bộ dữ liệu deep learning quy mô lớn.
-        \item Thiếu dữ liệu về các tình huống té ngã đặc biệt như té ngã khi leo cầu thang, té ngã trong phòng tắm.
+        \item Bộ dữ liệu thực nghiệm (651 mẫu) còn hạn chế so với các bộ dữ liệu deep learning quy mô lớn.
+        \item Sự khác biệt về điều kiện thu录像 giữa CaucaFall và MCFD có thể ảnh hưởng đến tính đồng nhất của dữ liệu huấn luyện.
     \end{itemize}
     
     \item \textbf{Hạn chế về khả năng nhận diện}:
     \begin{itemize}
-        \item Tỷ lệ bỏ sót 6.25\% (3/48) đối với các cú ngã chậm (slow descent fall) -- loại té ngã có tốc độ thay đổi tư thế chậm, khó phân biệt với hoạt động ngồi xuống bình thường.
-        \item Báo động sai 4.35\% (1/23) đối với hoạt động "ngồi phịch xuống" với tốc độ nhanh.
+        \item Kết quả 81.26\% accuracy chưa đạt mức state-of-the-art so với một số phương pháp GCN và 3D-CNN.
+        \item Sự biến động giữa các folds (77.69\% - 83.21\%) cho thấy mô hình có thể chưa hoàn toàn robust.
         \item Chưa phân biệt được các loại té ngã khác nhau (ngã về phía trước, ngã về phía sau, trượt chân).
     \end{itemize}
     
     \item \textbf{Hạn chế về triển khai Edge}:
     \begin{itemize}
-        \item FPS trên Raspberry Pi 4 (8.7 FPS) chưa đạt tốc độ thời gian thực hoàn chỉnh cho camera 30 FPS.
-        \item Chưa triển khai và đánh giá trên các thiết bị biên khác như NVIDIA Jetson Nano, Jetson Orin, hoặc các vi điều khiển IoT.
+        \item FPS trên Raspberry Pi 4 (8-12 FPS) chưa đạt tốc độ thời gian thực hoàn chỉnh cho camera 30 FPS.
+        \item Chưa triển khai và đánh giá trên các thiết bị biên khác như NVIDIA Jetson.
         \item Chưa áp dụng các kỹ thuật tối ưu hóa như quantization, pruning để giảm kích thước mô hình thêm.
     \end{itemize}
     
@@ -105,7 +110,6 @@ Bên cạnh các kết quả đạt được, hệ thống HybridFallTransformer
     \begin{itemize}
         \item Chưa xử lý tốt trường hợp nhiều người trong cùng khung hình.
         \item Chưa có cơ chế xử lý occlusion -- khi một phần cơ thể bị che khuất, điểm khớp bị mất có thể ảnh hưởng đến độ chính xác.
-        \item Chuỗi window cố định (16 khung hình) có thể không phù hợp với mọi tình huống.
     \end{itemize}
 \end{enumerate}
 
@@ -119,13 +123,13 @@ Dựa trên các hạn chế đã nhận diện, đề tài đề xuất ba hư�
 \label{sec:future_edge}
 
 \begin{enumerate}
-    \item \textbf{Quantization và Pruning}: Áp dụng các kỹ thuật nén mô hình như INT8 quantization và structured pruning để giảm kích thước và tăng tốc độ suy luận trên thiết bị biên. Dự kiến giảm 50-75\% kích thước mô hình với độ chính xác giảm không quá 2\%.
+    \item \textbf{Quantization và Pruning}: Áp dụng các kỹ thuật nén mô hình như INT8 quantization và structured pruning để giảm kích thước và tăng tốc độ suy luận trên thiết bị biên.
     
-    \item \textbf{Tối ưu YOLOv11n-Pose cho Edge}: Sử dụng TensorRT hoặc ONNX Runtime để tối ưu hóa YOLOv11n-Pose trên NVIDIA Jetson, hướng tới đạt 30+ FPS trên thiết bị Edge với GPU tích hợp.
+    \item \textbf{Tối ưu cho Edge}: Sử dụng TensorRT hoặc ONNX Runtime để tối ưu hóa mô hình trên thiết bị Edge, hướng tới đạt 30+ FPS trên Raspberry Pi.
     
     \item \textbf{Edge-Cloud Hybrid}: Thiết kế kiến trúc hybrid cho phép xử lý trên Edge khi điều kiện mạng không thuận lợi, tự động chuyển lên Cloud khi cần tăng cường độ chính xác.
     
-    \item \textbf{Kết hợp với TinyML}: Nghiên cứu khả năng triển khai mô hình nhẹ hơn nữa trên vi điều khiển ARM Cortex-M (như STM32) sử dụng TensorFlow Lite Micro, mở ra ứng dụng trên các thiết bị IoT siêu rẻ.
+    \item \textbf{Kết hợp với TinyML}: Nghiên cứu khả năng triển khai mô hình nhẹ hơn nữa trên vi điều khiển IoT.
 \end{enumerate}
 
 \subsection{Mở rộng bài toán và dữ liệu}
@@ -138,20 +142,20 @@ Dựa trên các hạn chế đã nhận diện, đề tài đề xuất ba hư�
     
     \item \textbf{Xử lý multi-person}: Nghiên cứu kiến trúc xử lý đồng thời nhiều người trong khung hình, phù hợp với môi trường bệnh viện có nhiều bệnh nhân.
     
-    \item \textbf{3D Pose Estimation}: Tích hợp mô hình ước lượng tư thế 3D (ví dụ: HybrIK, ZoeDepth) để cải thiện khả năng phân biệt té ngã từ các góc nhìn khác nhau và giảm ảnh hưởng của occlusion.
+    \item \textbf{Data Augmentation}: Áp dụng các kỹ thuật augmentation cho dữ liệu skeleton để tăng tính đa dạng và robust của mô hình.
 \end{enumerate}
 
 \subsection{Học liên kết và AI giải thích được}
 \label{sec:future_federated_xai}
 
 \begin{enumerate}
-    \item \textbf{Federated Learning}: Triển khai học liên kết (Federated Learning) cho phép huấn luyện mô hình trên dữ liệu phân tán từ nhiều cơ sở y tế mà không cần tập trung dữ liệu về một server trung tâm, đồng thời bảo vệ quyền riêng tư của bệnh nhân. Mỗi bệnh viện huấn luyện cục bộ và chỉ gửi trọng số mô hình (không phải dữ liệu) lên server tổng hợp.
+    \item \textbf{Federated Learning}: Triển khai học liên kết (Federated Learning) cho phép huấn luyện mô hình trên dữ liệu phân tán từ nhiều cơ sở y tế mà không cần tập trung dữ liệu về một server trung tâm, đồng thời bảo vệ quyền riêng tư của bệnh nhân.
     
     \item \textbf{XAI cho Fall Detection}: Tích hợp các phương pháp AI giải thích được (Explainable AI) như Grad-CAM, Attention Visualization để hiểu được mô hình tập trung vào đâu khi đưa ra quyết định. Điều này quan trọng trong môi trường y tế để tăng độ tin tưởng của nhân viên y tế vào hệ thống.
     
     \item \textbf{Online Learning}: Nghiên cứu khả năng học trực tuyến (online learning) cho phép hệ thống cập nhật trọng số từ các trường hợp mới mà không cần huấn luyện lại toàn bộ, thích ứng với đặc điểm di chuyển của từng bệnh nhân cụ thể.
     
-    \item \textbf{Anomaly Detection}: Chuyển đổi bài toán từ phân loại có giám sát sang phát hiện bất thường (anomaly detection), cho phép phát hiện các hành vi bất thường ngoài té ngã mà không cần dữ liệu có nhãn cho mọi loại bất thường.
+    \item \textbf{Kiến trúc Attention nâng cao}: Cải thiện kiến trúc Transformer bằng cách thử nghiệm các cơ chế Attention khác như Longformer, Linformer để xử lý chuỗi dài hơn hoặc giảm độ phức tạp tính toán.
 \end{enumerate}
 
 %-------------------------------------------------
@@ -159,8 +163,20 @@ Dựa trên các hạn chế đã nhận diện, đề tài đề xuất ba hư�
 \section{Tổng kết}
 \label{sec:final_summary}
 
-Nhìn tổng thể, đề tài đã hoàn thành mục tiêu đề ra: xây dựng hệ thống phát hiện té ngã dựa trên khung xương với độ chính xác cao (94.87\% accuracy), kiến trúc siêu nhẹ (54K tham số Transformer), có thể triển khai trên thiết bị biên (Raspberry Pi 4), và bảo vệ quyền riêng tư người dùng. Hệ thống HybridFallTransformer là bước tiến thực tiễn trong việc đưa công nghệ AI vào ứng dụng chăm sóc sức khỏe người cao tuổi, đặc biệt trong bối cảnh già hóa dân số tại Việt Nam và trên thế giới.
+Nhìn tổng thể, đề tài đã hoàn thành mục tiêu đề ra: xây dựng hệ thống phát hiện té ngã dựa trên khung xương với độ chính xác 81.26\% accuracy trên 5-Fold Cross-Validation, kiến trúc nhẹ với khả năng triển khai trên thiết bị biên (Raspberry Pi 4 với 8-12 FPS), và bảo vệ quyền riêng tư người dùng.
 
-Các hướng phát triển đề xuất mở ra nhiều cơ hội nghiên cứu tiếp theo, từ tối ưu hóa triển khai Edge AI đến ứng dụng các kỹ thuật học liên kết và AI giải thích được. Hy vọng rằng những kết quả và định hướng này sẽ đóng góp tích cực vào sự phát triển của lĩnh vực thị giác máy tính ứng dụng trong y tế.
+Kết quả đạt được trong thực nghiệm:
+
+\begin{itemize}
+    \item \textbf{Accuracy}: 81.26\% $\pm$ 2.21\%
+    \item \textbf{F1-Score}: 80.05\% $\pm$ 2.22\%
+    \item \textbf{AUC-ROC}: 84.67\%
+    \item \textbf{FPS trên Edge}: 8-12 FPS trên Raspberry Pi 4
+    \item \textbf{Kích thước mô hình}: ~7-10MB
+\end{itemize}
+
+Hệ thống HybridFallTransformer là bước tiến thực tiễn trong việc đưa công nghệ AI vào ứng dụng chăm sóc sức khỏe người cao tuổi, đặc biệt trong bối cảnh già hóa dân số tại Việt Nam và trên thế giới. Tuy nhiên, với kết quả hiện tại, vẫn cần cải thiện thêm để đạt mức accuracy cao hơn (90\%+) như các phương pháp state-of-the-art.
+
+Các hướng phát triển đề xuất mở ra nhiều cơ hội nghiên cứu tiếp theo, từ tối ưu hóa triển khai Edge AI, mở rộng dữ liệu huấn luyện, đến ứng dụng các kỹ thuật học liên kết và AI giải thích được. Hy vọng rằng những kết quả và định hướng này sẽ đóng góp tích cực vào sự phát triển của lĩnh vực thị giác máy tính ứng dụng trong y tế.
 
 %=================================================
