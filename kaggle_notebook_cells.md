@@ -1073,32 +1073,34 @@ else:
     print("=" * 70)
 ```
 
-## Cell 6: Save Results
+## Cell 6: Save All Results (ZIP)
 
 ```python
 import shutil
 import os
+import zipfile
 from pathlib import Path
 
-# Create zip of results
+# Create zip of ALL results
 MODEL_DIR = Path("/kaggle/working/models")
 RESULTS_DIR = Path("/kaggle/working/results")
+LOG_DIR = Path("/kaggle/working/logs")
 
 zip_path = "/kaggle/working/fall_detection_results.zip"
 
 # Collect all files
-import zipfile
 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for d in [MODEL_DIR, RESULTS_DIR]:
-        if d.exists():
-            for f in d.rglob('*'):
+    for name, directory in [("models", MODEL_DIR), ("results", RESULTS_DIR), ("logs", LOG_DIR)]:
+        if directory.exists():
+            for f in directory.rglob('*'):
                 if f.is_file():
-                    zf.write(f, f.relative_to(d.parent))
-                    print(f"  Adding: {f.name}")
+                    zf.write(f, f.relative_to('/kaggle/working'))
+                    print(f"  Adding: {name}/{f.name}")
 
 size = os.path.getsize(zip_path) / 1024 / 1024
 print(f"\n✓ Created: {zip_path}")
 print(f"✓ Size: {size:.1f} MB")
+print("\nContents: models/*, results/*, logs/*")
 ```
 
 ---
